@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="ecopv-workbench-build" content="2026.09.30-r7">
+<title>邮件审核 · 运行控制台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/run/console.css?v=20260930-r7"><script src="/run/console.js?v=20260930-r7" defer></script></head>
+<body><header class="top"><a class="brand" href="/run">邮件审核工作台</a><nav><a class="active" href="/run" aria-current="page">运行控制台</a><a href="/" target="_blank" rel="noopener">人工复核 ↗</a></nav><span class="version">本机运行 · <span id="build">2026.09.30-r7</span></span></header>
+<main><div class="heading"><div><h1>运行控制台</h1><p>选择日期读取邮件，核对提取结果，再查询工单。</p></div><a class="button" href="/" target="_blank" rel="noopener">打开人工复核工作台 ↗</a></div><div id="notice" role="status" hidden></div>
+<div class="layout"><section class="panel controls"><h2>运行设置</h2><form id="run-form"><fieldset id="run-fields" disabled>
+<label for="mode">运行方式</label><select id="mode"><option value="stage1">阶段一 · 邮件解析</option><option value="stage2">阶段二 · 工单核对</option><option value="all">一站式 · 解析后继续查询（原流程）</option></select><p class="hint" id="mode-help">仅处理所选日期范围内的邮件；不会扫描全部邮件。</p>
+<div id="dates" class="columns"><div><label for="date-from">开始日期</label><input id="date-from" type="date" required></div><div><label for="date-to">结束日期（含当天）</label><input id="date-to" type="date" required></div></div>
+<div id="stage1-inputs"><h3>阶段一参考表</h3><p class="hint">自动沿用已有文件，也可以重新导入。原始文件不会被覆盖。</p>
+<div class="file-row"><div><b>代理邮箱表</b><span id="file-agent">正在读取…</span></div><label class="button upload">导入<input type="file" data-role="agent" accept=".xlsx" aria-label="导入代理邮箱表"></label></div>
+<div class="file-row"><div><b>内部邮箱表</b><span id="file-internal">正在读取…</span></div><label class="button upload">导入<input type="file" data-role="internal" accept=".xlsx" aria-label="导入内部邮箱表"></label></div>
+<div class="file-row"><div><b>项目名称表</b><span id="file-project">正在读取…</span></div><label class="button upload">导入<input type="file" data-role="project" accept=".xlsx" aria-label="导入项目名称表"></label></div></div>
+<div id="stage2-inputs" hidden><label for="stage2-file">待查询文件</label><select id="stage2-file"><option value="">请选择已确认导出的结果</option></select><p class="hint">建议选择工作台导出的已确认结果。仍执行原有查询资格检查，不会因网页入口而跳过 WEEE 品类确认。</p><div class="row"><label class="button upload">上传待查询文件<input type="file" data-role="stage2" accept=".xlsx" aria-label="上传阶段二待查询文件"></label><button type="button" id="refresh-files">刷新文件列表</button></div></div>
+<label class="check" id="force-wrap" hidden><input type="checkbox" id="force-live">不复用工单查询缓存，重新查询</label></fieldset>
+<div class="run-actions"><button class="primary" type="submit" id="start" disabled>开始邮件解析</button><button type="button" id="stop" disabled>停止运行</button></div></form>
+<details id="account"><summary>账号配置 <span>密码留空即保持原设置</span></summary><form id="settings-form"><fieldset id="settings-fields" disabled>
+<label for="email-address">阿里邮箱账号</label><input id="email-address" type="email" autocomplete="username"><label for="email-password">阿里邮箱密码</label><input id="email-password" type="password" autocomplete="new-password"><label for="wo-user">工单系统账号</label><input id="wo-user" autocomplete="username"><label for="wo-password">工单系统密码</label><input id="wo-password" type="password" autocomplete="new-password">
+<p class="hint">沿用本机 config.yaml。已有密码不会回传网页；这里不会上传到其他服务器。</p><button type="submit">保存账号配置</button></fieldset></form></details></section>
+<div class="right-column"><section class="panel run-status"><div class="section-heading"><h2>当前任务</h2><span id="status" class="badge">连接中</span></div><p id="message">正在连接本机服务…</p><progress id="progress" max="100" value="0"></progress><div class="hint" id="progress-text">未开始</div><div id="results" class="results"></div></section>
+<section class="panel logs"><div class="section-heading"><h2>运行日志</h2><label class="check"><input type="checkbox" id="follow" checked>跟随最新日志</label></div><pre id="log" tabindex="0">尚无运行日志。启动任务后会在此显示。</pre><p class="hint">页面只更新新增日志，不刷新当前输入。关闭标签页不会停止后台任务。</p></section>
+<section class="panel"><h2>读取已有结果</h2><p class="hint">使用已保存的阶段一日期缓存，不重新连接邮箱。</p><div class="cache-row"><select id="cache" aria-label="阶段一日期缓存"><option value="">正在读取缓存目录…</option></select><button id="use-cache" disabled>读取缓存</button></div><p id="cache-message" class="hint"></p></section></div></div>
+<footer><span>运行入口与桌面版共用解析、确认记录及查询逻辑。仅供本机使用。</span><button id="shutdown" class="quiet" disabled>退出本机服务</button></footer></main></body></html>

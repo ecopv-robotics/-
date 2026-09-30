@@ -1,0 +1,939 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="邮件复核工作台独立交互原型，使用演示数据。" />
+  <title>邮件复核工作台 · UI 原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f3f6f5;
+      --surface: #fff;
+      --surface-soft: #f8faf9;
+      --surface-active: #eef6f3;
+      --ink: #213a35;
+      --muted: #687d77;
+      --subtle: #879892;
+      --line: #e1e9e6;
+      --line-strong: #cddbd5;
+      --accent: #176f61;
+      --accent-strong: #0f6558;
+      --accent-soft: #e8f3ef;
+      --amber: #8a5718;
+      --amber-soft: #fbf2e3;
+      --blue: #316884;
+      --blue-soft: #eaf2f7;
+      --red: #9c514b;
+      --red-soft: #fbefed;
+      --radius-panel: 12px;
+      --radius-control: 8px;
+      --shadow-panel: 0 1px 2px rgba(30, 61, 52, .035);
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 24px;
+      --space-6: 32px;
+      font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; min-width: 360px; height: 100%; margin: 0; }
+    body { color: var(--ink); background: var(--page); font-size: 14px; line-height: 1.5; }
+    button, input, select, textarea { color: inherit; font: inherit; }
+    button { touch-action: manipulation; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 2px solid #78aa9b;
+      outline-offset: 2px;
+    }
+
+    .app { height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 10px; padding: 12px 14px 8px; }
+    .topbar, .summary, .panel, .footer { background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-panel); }
+    .topbar { min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 16px; border-radius: var(--radius-panel); }
+    .brand-line { display: flex; align-items: center; gap: 12px; min-width: 230px; }
+    .brand-mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: var(--accent); color: #fff; font-weight: 700; font-size: 15px; }
+    .brand-name { font-size: 15px; font-weight: 650; letter-spacing: -.2px; }
+    .brand-caption { margin-top: 1px; color: var(--muted); font-size: 12px; }
+    .top-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+    .demo-badge { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #d6e6df; border-radius: 7px; padding: 6px 9px; background: #f2f8f5; color: #456b60; font-size: 12px; white-space: nowrap; }
+    .demo-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+    .date-range { display: flex; align-items: center; gap: 7px; padding: 4px 7px 4px 10px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface-soft); }
+    .date-range label { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    input[type="date"] { min-width: 122px; border: 1px solid transparent; border-radius: 6px; background: #fff; padding: 6px 7px; font-size: 13px; }
+    .date-separator { color: var(--subtle); }
+
+    .btn { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); padding: 7px 12px; background: #fff; color: var(--ink); cursor: pointer; white-space: nowrap; transition: background-color .16s ease, border-color .16s ease, color .16s ease, transform .12s ease; }
+    .btn:hover { background: #f5f8f7; border-color: #b7cbc2; }
+    .btn:active { transform: translateY(1px); }
+    .btn.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .btn.primary:hover { border-color: var(--accent-strong); background: var(--accent-strong); }
+    .btn.soft { border-color: #d8e8e2; background: var(--accent-soft); color: var(--accent-strong); }
+    .btn.danger { color: var(--red); border-color: #ecd9d6; }
+    .btn.danger:hover { background: var(--red-soft); border-color: #dfbeba; }
+    .btn.small { min-height: 32px; padding: 5px 9px; font-size: 13px; }
+    .btn.tiny { min-height: 29px; padding: 4px 8px; font-size: 12px; }
+    .btn:disabled { opacity: .48; cursor: not-allowed; transform: none; }
+
+    .summary { min-height: 76px; display: grid; grid-template-columns: 1.08fr repeat(3, minmax(118px, .72fr)) minmax(230px, 1.35fr); align-items: center; gap: 0; padding: 7px 13px; border-radius: var(--radius-panel); }
+    .summary-intro { padding: 6px 15px 6px 5px; }
+    .summary-intro strong { display: block; font-size: 14px; font-weight: 650; }
+    .summary-intro span { color: var(--muted); font-size: 12px; }
+    .stat { min-height: 45px; display: flex; align-items: center; gap: 11px; padding: 3px 14px; border-left: 1px solid var(--line); }
+    .stat-number { min-width: 30px; font-size: 22px; font-weight: 650; line-height: 1; font-variant-numeric: tabular-nums; }
+    .stat-label { color: var(--muted); font-size: 12px; }
+    .stage-stat { justify-content: space-between; gap: 12px; border-left: 1px solid var(--line); padding-right: 4px; }
+    .stage-stat-copy { min-width: 0; }
+    .stage-stat-copy strong { display: block; font-size: 13px; font-weight: 600; }
+    .stage-stat-copy span { color: var(--muted); font-size: 12px; }
+
+    .workspace { min-height: 0; display: grid; grid-template-columns: 56px minmax(258px, 292px) minmax(520px, 1.06fr) minmax(440px, .98fr); gap: 8px; position: relative; }
+    .panel { min-width: 0; min-height: 0; overflow: hidden; border-radius: var(--radius-panel); }
+    .rail { z-index: 15; position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 9px 6px; background: #edf3f1; transition: width .18s ease; }
+    .rail:hover, .rail:focus-within { width: 190px; align-items: stretch; padding: 9px 8px; border-color: var(--line-strong); }
+    .rail-head { height: 38px; display: grid; place-items: center; margin-bottom: 7px; color: var(--accent); font-weight: 700; }
+    .rail:hover .rail-head, .rail:focus-within .rail-head { display: flex; justify-content: flex-start; gap: 10px; padding-left: 9px; }
+    .rail-head-text { display: none; color: var(--ink); font-size: 12px; white-space: nowrap; }
+    .rail:hover .rail-head-text, .rail:focus-within .rail-head-text { display: inline; }
+    .nav-btn { min-height: 42px; width: 40px; display: flex; align-items: center; justify-content: center; gap: 11px; border: 0; border-radius: 8px; padding: 0; background: transparent; color: var(--muted); cursor: pointer; text-align: left; }
+    .rail:hover .nav-btn, .rail:focus-within .nav-btn { width: 100%; justify-content: flex-start; padding: 0 11px; }
+    .nav-btn:hover { background: #e1ece7; color: var(--ink); }
+    .nav-btn.active { background: #dcebe5; color: var(--accent-strong); font-weight: 600; }
+    .nav-glyph { width: 19px; flex: 0 0 19px; display: inline-grid; place-items: center; font-size: 11px; font-weight: 700; }
+    .nav-label { display: none; flex: 1; font-size: 13px; white-space: nowrap; }
+    .rail:hover .nav-label, .rail:focus-within .nav-label { display: inline; }
+    .nav-count { display: none; margin-left: auto; border-radius: 5px; padding: 1px 6px; background: #fff; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .rail:hover .nav-count, .rail:focus-within .nav-count { display: inline; }
+    .rail-spacer { flex: 1; }
+    .nav-foot { width: 38px; padding: 7px 0; color: var(--subtle); font-size: 10px; text-align: center; }
+    .rail:hover .nav-foot { width: 100%; text-align: left; padding: 8px 10px; }
+
+    .queue-pane { display: flex; flex-direction: column; }
+    .pane-head { min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+    .pane-title { margin: 0; font-size: 15px; font-weight: 650; }
+    .pane-count { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .queue-tools { display: grid; gap: 9px; padding: 12px 12px 10px; border-bottom: 1px solid var(--line); }
+    .search-wrap { position: relative; }
+    .search-wrap input { width: 100%; min-height: 39px; border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px 8px 34px; background: #fff; }
+    .search-glyph { position: absolute; left: 11px; top: 10px; color: var(--subtle); font-size: 16px; }
+    .filter-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+    .filter-tab { min-height: 34px; border: 1px solid transparent; border-radius: 7px; padding: 5px 4px; background: #f4f7f6; color: var(--muted); cursor: pointer; font-size: 12px; white-space: nowrap; }
+    .filter-tab:hover { background: #edf3f0; }
+    .filter-tab.active { border-color: #d4e5dd; background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; }
+    .selection-row { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 12px; }
+    .select-link { border: 0; padding: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; }
+    .queue-list { flex: 1; min-height: 0; overflow: auto; padding: 2px 8px 10px; scrollbar-color: #cad8d3 transparent; scrollbar-width: thin; }
+    .queue-item { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; padding: 12px 8px 11px; border-bottom: 1px solid #edf1ef; border-radius: 7px; cursor: pointer; }
+    .queue-item:hover { background: #f7faf8; }
+    .queue-item.selected { background: #eff6f3; box-shadow: inset 3px 0 0 var(--accent); }
+    .queue-check { width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--accent); cursor: pointer; }
+    .queue-subject { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: 13px; font-weight: 620; line-height: 1.38; }
+    .queue-meta { display: flex; justify-content: space-between; gap: 7px; margin-top: 6px; color: var(--muted); font-size: 11px; }
+    .queue-meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .queue-foot { display: flex; align-items: center; justify-content: space-between; gap: 5px; margin-top: 7px; }
+    .queue-foot .small-note { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .status { display: inline-flex; align-items: center; gap: 5px; border-radius: 5px; padding: 3px 7px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .status.pending { background: var(--amber-soft); color: var(--amber); }
+    .status.review { background: #f8ecea; color: #99544c; }
+    .status.confirmed { background: var(--accent-soft); color: var(--accent-strong); }
+    .status.filtered { background: #eef1f2; color: #687b7c; }
+
+    .review-pane { display: flex; flex-direction: column; }
+    .review-scroll { min-height: 0; flex: 1; overflow: auto; scrollbar-color: #cad8d3 transparent; scrollbar-width: thin; }
+    .mail-head { padding: 15px 17px 13px; }
+    .mail-eyebrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .mail-project { color: var(--blue); font-size: 12px; font-weight: 600; }
+    .mail-title { margin: 8px 0 7px; font-size: 19px; font-weight: 680; line-height: 1.32; letter-spacing: -.25px; text-wrap: balance; }
+    .mail-meta { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--muted); font-size: 12px; }
+    .mail-summary { margin-top: 8px; color: var(--muted); font-size: 12px; }
+    .review-hint { display: flex; align-items: flex-start; gap: 8px; margin: 11px 0 0; border-left: 3px solid #d6b06e; padding: 7px 9px; background: #fcf8ef; color: #70572f; font-size: 12px; }
+    .review-hint strong { white-space: nowrap; }
+    .action-bar { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 13px; }
+    .more-actions { position: relative; }
+    .more-actions summary { min-height: 32px; display: inline-flex; align-items: center; border: 1px solid var(--line-strong); border-radius: 8px; padding: 4px 10px; color: var(--muted); cursor: pointer; list-style: none; font-size: 12px; }
+    .more-actions summary::-webkit-details-marker { display: none; }
+    .more-menu { z-index: 30; position: absolute; top: calc(100% + 5px); right: 0; min-width: 175px; display: grid; gap: 2px; border: 1px solid var(--line); border-radius: 9px; padding: 5px; background: #fff; box-shadow: 0 8px 20px rgba(35, 64, 55, .1); }
+    .more-menu button { min-height: 34px; border: 0; border-radius: 6px; padding: 6px 8px; background: transparent; color: var(--ink); cursor: pointer; text-align: left; font-size: 12px; }
+    .more-menu button:hover { background: var(--surface-active); }
+    .more-menu button.danger-text { color: var(--red); }
+    .stage-row { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 9px 16px; background: #fbfcfb; }
+    .stage-step { display: flex; align-items: center; gap: 7px; color: var(--subtle); font-size: 11px; white-space: nowrap; }
+    .stage-step:not(:last-child)::after { content: ""; height: 1px; flex: 1; margin: 0 6px; background: var(--line-strong); }
+    .stage-mark { width: 17px; height: 17px; flex: 0 0 17px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; background: #fff; color: var(--muted); font-size: 10px; }
+    .stage-step.done { color: var(--accent-strong); }
+    .stage-step.done .stage-mark { border-color: #9cc7b8; background: var(--accent-soft); color: var(--accent-strong); }
+    .stage-step.current { color: var(--amber); font-weight: 650; }
+    .stage-step.current .stage-mark { border-color: #e8c98e; background: var(--amber-soft); color: var(--amber); }
+    .detail-tabs { display: flex; align-items: center; gap: 18px; min-height: 47px; padding: 0 17px; border-bottom: 1px solid var(--line); }
+    .detail-tab { height: 47px; position: relative; border: 0; padding: 0 1px; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; }
+    .detail-tab.active { color: var(--accent-strong); font-weight: 650; }
+    .detail-tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent); }
+    .review-content { padding: 14px 16px 22px; }
+    .content-intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .content-intro strong { font-size: 13px; font-weight: 650; }
+    .content-intro span { color: var(--muted); font-size: 11px; }
+    .field-board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+    .field-chip { min-width: 0; display: grid; grid-template-columns: 61px minmax(0, 1fr); gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #fff; cursor: pointer; text-align: left; }
+    .field-chip:hover { border-color: #b9cec5; background: #fafcfb; }
+    .field-chip.active { border-color: #9fc7b7; background: #f2f8f5; box-shadow: inset 2px 0 0 var(--accent); }
+    .field-label { color: var(--muted); font-size: 11px; }
+    .field-value { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .field-empty { color: var(--subtle); font-weight: 450; }
+    .detail-list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 14px 0 8px; }
+    .detail-list-head h3 { margin: 0; font-size: 14px; font-weight: 650; }
+    .detail-list-head span { color: var(--muted); font-size: 11px; }
+    .weee-rows { display: grid; gap: 7px; }
+    .weee-row { overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+    .weee-row.selected { border-color: #a7cabe; background: #fcfefd; box-shadow: 0 0 0 1px rgba(23, 111, 97, .07); }
+    .weee-row-head { width: 100%; min-height: 54px; display: grid; grid-template-columns: minmax(140px, 1.2fr) minmax(70px, .55fr) minmax(115px, .8fr) auto; align-items: center; gap: 9px; border: 0; padding: 8px 11px; background: transparent; cursor: pointer; text-align: left; }
+    .weee-company { overflow: hidden; font-size: 12px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+    .weee-brand { overflow: hidden; color: var(--ink); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .weee-class { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .weee-edit { padding: 3px 7px; border-radius: 5px; background: #f1f5f3; color: var(--muted); font-size: 10px; }
+    .weee-editor { display: grid; grid-template-columns: .8fr 1.45fr .9fr; gap: 9px; padding: 4px 11px 12px; }
+    .form-field { min-width: 0; display: grid; gap: 4px; }
+    .form-field label { color: var(--muted); font-size: 11px; }
+    .form-field input, .form-field select, .form-field textarea { width: 100%; min-width: 0; min-height: 36px; border: 1px solid var(--line-strong); border-radius: 7px; padding: 6px 8px; background: #fff; font-size: 12px; }
+    .weee-actions { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 1px; }
+    .draft-state { color: var(--muted); font-size: 11px; }
+    .draft-state.saved { color: var(--accent-strong); }
+    .business-card { border: 1px solid var(--line); border-radius: 9px; padding: 12px; background: #fff; }
+    .business-card + .business-card { margin-top: 8px; }
+    .business-card.selected { border-color: #a7cabe; background: #fcfefd; }
+    .business-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .business-card-head strong { font-size: 13px; }
+    .business-fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 7px; }
+    .business-actions { display: flex; gap: 7px; margin-top: 11px; }
+    .raw-email, .history-list { border: 1px solid var(--line); border-radius: 9px; padding: 14px; background: var(--surface-soft); color: #405b54; white-space: pre-wrap; line-height: 1.8; }
+    .history-entry { padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .history-entry:last-child { border-bottom: 0; }
+    .history-entry time { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+
+    .evidence-pane { display: flex; flex-direction: column; }
+    .evidence-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--line); }
+    .evidence-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .evidence-title { margin: 0; font-size: 15px; font-weight: 650; }
+    .evidence-subtitle { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .current-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; border: 1px solid #dce9e3; border-radius: 7px; padding: 7px 9px; background: #f6faf8; }
+    .current-field span { color: var(--muted); font-size: 11px; }
+    .current-field strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .evidence-scroll { min-height: 0; flex: 1; overflow: auto; padding: 12px 14px 22px; scrollbar-color: #cad8d3 transparent; scrollbar-width: thin; }
+    .evidence-group-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 1px 7px; }
+    .evidence-group-title h3 { margin: 0; font-size: 12px; font-weight: 650; }
+    .evidence-group-title span { color: var(--muted); font-size: 10px; }
+    .source-card { margin-bottom: 7px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px; background: #fff; }
+    .source-card.primary-source { border-color: #b3d1c5; background: #f9fcfa; }
+    .source-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .source-name { font-size: 12px; font-weight: 650; }
+    .source-tag { color: var(--muted); font-size: 10px; }
+    .priority-tag { border-radius: 4px; padding: 2px 6px; background: var(--accent-soft); color: var(--accent-strong); font-size: 10px; font-weight: 600; }
+    .source-value { color: #355149; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+    .source-empty { color: var(--subtle); font-size: 11px; }
+    .source-meta { margin-top: 6px; color: var(--muted); font-size: 10px; }
+    .attachment-section { margin-top: 15px; }
+    .attachment-list { display: grid; gap: 7px; }
+    .attachment-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 9px; background: #fbfcfb; }
+    .attachment-name-wrap { min-width: 0; }
+    .attachment-name { overflow: hidden; display: block; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .attachment-meta { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .attachment-actions { display: flex; flex: 0 0 auto; gap: 5px; }
+    .text-button { min-height: 30px; border: 0; border-radius: 6px; padding: 4px 7px; background: var(--accent-soft); color: var(--accent-strong); cursor: pointer; font-size: 11px; }
+    .text-button:hover { background: #dcece5; }
+    .forms-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0 7px; }
+    .forms-heading strong { font-size: 12px; font-weight: 650; }
+    .forms-heading span { color: var(--muted); font-size: 10px; }
+    .form-previews { display: grid; gap: 8px; }
+    .form-preview { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    .form-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; background: #f5f8f7; }
+    .form-preview-head strong { overflow: hidden; font-size: 11px; font-weight: 630; text-overflow: ellipsis; white-space: nowrap; }
+    .form-preview-head span { color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .mini-table-wrap { overflow-x: auto; }
+    .mini-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .mini-table th, .mini-table td { border-top: 1px solid #edf1ef; padding: 5px 7px; text-align: left; vertical-align: top; }
+    .mini-table th { width: 35%; color: var(--muted); font-weight: 500; }
+    .mini-table td { color: #38564d; overflow-wrap: anywhere; }
+    .xlsx-preview { margin-top: 9px; }
+    .xlsx-preview .mini-table th:first-child { width: 9%; }
+    .xlsx-preview .mini-table th:nth-child(2) { width: 48%; }
+    .xlsx-preview .mini-table td { color: var(--ink); }
+    .evidence-note { margin-top: 10px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+
+    .footer { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-radius: 8px; padding: 5px 11px; color: var(--muted); font-size: 11px; }
+    .footer strong { color: #4f6b61; font-weight: 600; }
+    .footer-right { white-space: nowrap; }
+    .toast { z-index: 120; position: fixed; right: 22px; bottom: 22px; display: flex; align-items: center; gap: 12px; max-width: min(510px, calc(100vw - 32px)); border: 1px solid #cfe0d8; border-radius: 9px; padding: 11px 14px; background: #fff; color: var(--ink); box-shadow: 0 8px 24px rgba(35,64,55,.13); opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
+    .toast.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    .toast-text { font-size: 13px; }
+    .toast-action { border: 0; background: none; color: var(--accent); cursor: pointer; font-weight: 650; }
+    .overlay { z-index: 100; position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 22px; background: rgba(31, 48, 43, .38); }
+    .overlay.open { display: flex; }
+    .dialog { width: min(980px, 96vw); max-height: min(88vh, 920px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #d8e2de; border-radius: 13px; background: #fff; box-shadow: 0 20px 54px rgba(29, 50, 44, .22); animation: dialog-in .18s ease-out; }
+    @keyframes dialog-in { from { opacity: 0; transform: translateY(7px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    .dialog-head { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding: 10px 15px 10px 19px; cursor: move; user-select: none; }
+    .dialog-title { margin: 0; font-size: 16px; font-weight: 650; }
+    .dialog-subtitle { color: var(--muted); font-size: 11px; }
+    .dialog-body { min-height: 0; overflow: auto; padding: 15px 18px; }
+    .dialog-foot { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--line); padding: 11px 16px; }
+    .form-tabs { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 12px; }
+    .form-tab { min-height: 34px; border: 1px solid var(--line-strong); border-radius: 7px; padding: 6px 10px; background: #fff; color: var(--muted); cursor: pointer; font-size: 12px; }
+    .form-tab.active { border-color: #a8cabc; background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; }
+    .full-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .full-table th, .full-table td { border: 1px solid var(--line); padding: 9px 11px; text-align: left; vertical-align: top; }
+    .full-table thead th { background: #f0f5f3; color: var(--muted); font-size: 11px; font-weight: 600; }
+    .full-table tbody th { width: 44px; background: #f8faf9; color: var(--muted); font-weight: 500; }
+    .confirm-box { width: min(480px, 94vw); }
+    .confirm-copy { color: var(--muted); line-height: 1.7; }
+    .correction-dialog { position: fixed; width: min(700px, calc(100vw - 32px)); max-height: calc(100vh - 40px); top: 50%; left: 50%; transform: translate(-50%, -50%); }
+    .correction-body { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 13px; }
+    .copy-field { position: relative; }
+    .copy-field input { padding-right: 72px; }
+    .copy-btn { position: absolute; right: 5px; bottom: 5px; min-height: 27px; border: 0; border-radius: 5px; padding: 3px 7px; background: #eef4f1; color: var(--muted); cursor: pointer; font-size: 10px; }
+    .copy-btn:hover { background: var(--accent-soft); color: var(--accent-strong); }
+    .prototype-toast-note { margin-top: 4px; color: var(--muted); font-size: 11px; }
+    .drawer-toggle { display: none; }
+    .empty-state { border: 1px dashed var(--line-strong); border-radius: 9px; padding: 28px 16px; color: var(--muted); text-align: center; }
+
+    @media (max-width: 1450px) {
+      .workspace { grid-template-columns: 52px minmax(250px, 275px) minmax(460px, 1fr); }
+      .evidence-pane { z-index: 50; position: fixed; top: 12px; right: 12px; bottom: 12px; width: min(620px, 52vw); box-shadow: -10px 0 30px rgba(35,64,55,.12); transform: translateX(calc(100% + 18px)); transition: transform .2s ease; }
+      body.evidence-open .evidence-pane { transform: translateX(0); }
+      .drawer-toggle { display: inline-flex; }
+      .summary { grid-template-columns: 1fr repeat(3, minmax(108px, .65fr)) minmax(200px, 1.2fr); }
+    }
+    @media (max-width: 980px) {
+      .app { height: auto; min-height: 100%; grid-template-rows: auto auto minmax(660px, 1fr) auto; }
+      .topbar { align-items: flex-start; flex-wrap: wrap; }
+      .top-actions { justify-content: flex-start; }
+      .summary { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 7px; }
+      .summary-intro { grid-column: 1 / -1; padding: 4px 5px; }
+      .stat:nth-of-type(2) { border-left: 0; }
+      .stage-stat { grid-column: 1 / -1; border-top: 1px solid var(--line); border-left: 0; padding: 8px 3px 2px; }
+      .workspace { min-height: 660px; grid-template-columns: 48px minmax(0,1fr); }
+      .queue-pane { z-index: 60; position: fixed; top: 12px; bottom: 12px; left: 12px; width: min(330px, calc(100vw - 80px)); box-shadow: 10px 0 30px rgba(35,64,55,.12); transform: translateX(calc(-100% - 18px)); transition: transform .2s ease; }
+      body.queue-open .queue-pane { transform: translateX(0); }
+      .rail { grid-column: 1; }
+      .review-pane { grid-column: 2; }
+      .queue-toggle { display: inline-flex; }
+      .evidence-pane { width: min(620px, calc(100vw - 80px)); }
+    }
+    @media (max-width: 720px) {
+      .app { padding: 8px; gap: 8px; }
+      .topbar { padding: 10px; }
+      .brand-line { min-width: 0; }
+      .date-range { flex-wrap: wrap; }
+      input[type="date"] { min-width: 118px; }
+      .summary { padding: 8px; }
+      .stat { padding: 3px 7px; gap: 7px; }
+      .stat-number { font-size: 19px; }
+      .stat-label { font-size: 10px; }
+      .stage-stat-copy strong { font-size: 12px; }
+      .stage-stat .btn { min-height: 33px; font-size: 11px; }
+      .workspace { min-height: 690px; grid-template-columns: 42px minmax(0,1fr); gap: 6px; }
+      .rail { padding: 8px 3px; }
+      .rail:hover, .rail:focus-within { width: 176px; }
+      .nav-btn { width: 34px; }
+      .mail-head { padding: 12px; }
+      .mail-title { font-size: 17px; }
+      .stage-row { padding: 8px 9px; }
+      .stage-step { gap: 4px; font-size: 9px; }
+      .stage-step:not(:last-child)::after { margin: 0 2px; }
+      .stage-mark { width: 15px; height: 15px; flex-basis: 15px; }
+      .detail-tabs { gap: 13px; padding: 0 12px; }
+      .review-content { padding: 12px 10px 18px; }
+      .field-board { grid-template-columns: 1fr; }
+      .weee-row-head { grid-template-columns: minmax(0,1fr) minmax(58px,.4fr) auto; }
+      .weee-class { display: none; }
+      .weee-editor { grid-template-columns: 1fr 1fr; }
+      .weee-editor .form-field:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+      .weee-actions { grid-column: 1 / -1; }
+      .footer { align-items: flex-start; flex-direction: column; }
+      .footer-right { white-space: normal; }
+      .overlay { padding: 10px; }
+      .dialog { max-height: 94vh; }
+      .correction-body { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand-line">
+        <div class="brand-mark" aria-hidden="true">E</div>
+        <div><div class="brand-name">邮件审核工作台</div><div class="brand-caption">询单整理与确认 · UI 交互原型</div></div>
+      </div>
+      <div class="top-actions">
+        <span class="demo-badge"><i class="demo-dot"></i>原型演示 · 非真实邮件数据</span>
+        <button class="btn small drawer-toggle queue-toggle" data-action="toggleQueue">邮件队列</button>
+        <div class="date-range" title="按邮件日期查看和导出">
+          <label for="dateStart">邮件日期</label>
+          <input type="date" id="dateStart" />
+          <span class="date-separator">至</span>
+          <input type="date" id="dateEnd" aria-label="结束日期" />
+          <button class="btn tiny" data-action="clearDates">全部</button>
+        </div>
+        <button class="btn small drawer-toggle" data-action="toggleEvidence">字段证据</button>
+        <button class="btn small" data-action="refresh">刷新数据</button>
+        <button class="btn small" id="bulkFilter" data-action="bulkFilter" disabled>转为已过滤（0）</button>
+        <button class="btn small soft" id="bulkConfirm" data-action="bulkConfirm" disabled>批量确认（0）</button>
+        <button class="btn small primary" data-action="export">导出复核结果</button>
+      </div>
+    </header>
+
+    <section class="summary" aria-label="当前工作量">
+      <div class="summary-intro"><strong>当前工作量</strong><span id="dateCaption">邮件日期：2026-08-26</span></div>
+      <div class="stat"><span class="stat-number" id="pendingCount">14</span><span><span class="stat-label">待复核</span><br><span class="stat-label">需要先处理</span></span></div>
+      <div class="stat"><span class="stat-number" id="readyCount">7</span><span><span class="stat-label">待确认</span><br><span class="stat-label">字段基本齐全</span></span></div>
+      <div class="stat"><span class="stat-number" id="doneCount">352</span><span><span class="stat-label">已完成</span><br><span class="stat-label">可按日期导出</span></span></div>
+      <div class="stage-stat"><div class="stage-stat-copy"><strong>阶段一已确认 <b id="queryCount">4</b> 条 → 阶段二可查询 <b id="stageTwoCount">4</b> 条</strong><span>只读演示状态，不连接工单系统</span></div><button class="btn tiny" data-action="stageTwo">查看可查询项</button></div>
+    </section>
+
+    <div class="workspace">
+      <nav class="panel rail" aria-label="工作视图">
+        <div class="rail-head"><span class="brand-mark" style="width:28px;height:28px;border-radius:7px;font-size:12px">E</span><span class="rail-head-text">工作视图</span></div>
+        <button class="nav-btn active" data-view="inbox" title="询单复核"><span class="nav-glyph">01</span><span class="nav-label">询单复核</span><span class="nav-count">26</span></button>
+        <button class="nav-btn" data-view="weee" title="德国 WEEE"><span class="nav-glyph">W</span><span class="nav-label">德国 WEEE</span><span class="nav-count">7</span></button>
+        <button class="nav-btn" data-view="missing" title="漏单邮件"><span class="nav-glyph">!</span><span class="nav-label">漏单邮件</span><span class="nav-count">1</span></button>
+        <button class="nav-btn" data-view="filtered" title="已过滤邮件"><span class="nav-glyph">—</span><span class="nav-label">已过滤邮件</span><span class="nav-count">46</span></button>
+        <div class="rail-spacer"></div>
+        <div class="nav-foot">本机工作台</div>
+      </nav>
+
+      <aside class="panel queue-pane" aria-label="邮件队列">
+        <div class="pane-head"><h2 class="pane-title">待办邮件</h2><span class="pane-count" id="queueCount">5 封</span></div>
+        <div class="queue-tools">
+          <label class="search-wrap"><span class="search-glyph" aria-hidden="true">⌕</span><input type="search" id="mailSearch" placeholder="搜索主题、公司、发件人…" /></label>
+          <div class="filter-tabs" role="group" aria-label="邮件状态筛选">
+            <button class="filter-tab active" data-filter="all">全部</button>
+            <button class="filter-tab" data-filter="review">待复核</button>
+            <button class="filter-tab" data-filter="pending">待确认</button>
+            <button class="filter-tab" data-filter="confirmed">已完成</button>
+          </div>
+          <div class="selection-row"><button class="select-link" data-action="selectVisible">全选当前列表</button><span id="selectedCount">已选 0 封</span><button class="select-link" data-action="clearSelection">清除</button></div>
+        </div>
+        <div class="queue-list" id="queueList"></div>
+      </aside>
+
+      <main class="panel review-pane" aria-label="邮件复核区">
+        <div class="review-scroll" id="reviewScroll">
+          <div class="mail-head" id="mailHead"></div>
+          <div class="stage-row" id="stageRow"></div>
+          <div class="detail-tabs" role="tablist" aria-label="邮件内容视图">
+            <button class="detail-tab active" data-tab="business">业务明细</button>
+            <button class="detail-tab" data-tab="mail">邮件原文</button>
+            <button class="detail-tab" data-tab="history">操作记录</button>
+          </div>
+          <div class="review-content" id="reviewContent"></div>
+        </div>
+      </main>
+
+      <aside class="panel evidence-pane" aria-label="字段证据与附件">
+        <div class="evidence-head">
+          <div class="evidence-title-row"><h2 class="evidence-title">字段证据</h2><span class="status confirmed">来源顺序清楚</span></div>
+          <div class="evidence-subtitle">选择中间的字段后，优先显示最可信来源；其他来源仍保留在下方，便于交叉核对。</div>
+          <div class="current-field"><span>当前查看字段</span><strong id="currentFieldValue">客户公司</strong></div>
+        </div>
+        <div class="evidence-scroll" id="evidenceScroll">
+          <div id="evidenceSources"></div>
+          <section class="attachment-section">
+            <div class="evidence-group-title"><h3>邮件附件</h3><span>可预览 · 可单独下载</span></div>
+            <div class="attachment-list" id="attachmentList"></div>
+            <div class="forms-heading"><strong>压缩包内 EPR 申请表</strong><span>3 份 · 全部展开</span></div>
+            <div class="form-previews" id="formPreviews"></div>
+            <div class="xlsx-preview" id="xlsxPreview"></div>
+            <p class="evidence-note">演示说明：此处展示 EPR 申请表、附件证据与品牌类别表。实际预览和下载需接入现有附件解析服务。</p>
+          </section>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="footer"><span><strong>本原型只模拟操作状态</strong>，不会修改真实邮件、工单或导出真实文件。</span><span class="footer-right">设计目标：待办先行 · 来源可追溯 · 操作可预期</span></footer>
+  </div>
+
+  <div class="toast" id="toast" role="status"><span class="toast-text" id="toastText"></span><button class="toast-action" id="toastAction" hidden></button></div>
+
+  <div class="overlay" id="previewOverlay" aria-hidden="true">
+    <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="previewTitle">
+      <header class="dialog-head" data-drag-handle="preview"><div><h2 class="dialog-title" id="previewTitle">附件预览</h2><div class="dialog-subtitle" id="previewSubtitle">演示数据</div></div><button class="btn small" data-action="closePreview">关闭</button></header>
+      <div class="dialog-body" id="previewBody"></div>
+      <footer class="dialog-foot"><button class="btn" data-action="closePreview">返回工作台</button></footer>
+    </section>
+  </div>
+
+  <div class="overlay" id="correctionOverlay" aria-hidden="true">
+    <section class="dialog correction-dialog" role="dialog" aria-modal="true" aria-labelledby="correctionTitle">
+      <header class="dialog-head" data-drag-handle="correction"><div><h2 class="dialog-title" id="correctionTitle">修正业务明细</h2><div class="dialog-subtitle">按住标题栏可移动；修改内容会先保存在本原型草稿中。</div></div><button class="btn small" data-action="closeCorrection">关闭</button></header>
+      <div class="dialog-body"><div class="correction-body" id="correctionFields"></div><div class="prototype-toast-note">修改原因已省略。复制按钮只复制对应字段，不会更改原邮件。</div></div>
+      <footer class="dialog-foot"><button class="btn" data-action="closeCorrection">取消</button><button class="btn primary" data-action="saveCorrection">保存修正</button></footer>
+    </section>
+  </div>
+
+  <div class="overlay" id="confirmOverlay" aria-hidden="true">
+    <section class="dialog confirm-box" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <header class="dialog-head"><h2 class="dialog-title" id="confirmTitle">确认操作</h2><button class="btn small" data-action="cancelConfirm">关闭</button></header>
+      <div class="dialog-body"><p class="confirm-copy" id="confirmCopy"></p></div>
+      <footer class="dialog-foot"><button class="btn" data-action="cancelConfirm">返回</button><button class="btn danger" id="confirmProceed">继续</button></footer>
+    </section>
+  </div>
+
+  <script>
+    const fields = [
+      { key: 'company', label: '客户公司' },
+      { key: 'agent', label: '代理' },
+      { key: 'country', label: '国家' },
+      { key: 'program', label: '服务项目' },
+      { key: 'request', label: '需求' },
+    ];
+    const eprForms = [
+      { short: '公司甲', filename: 'EPR申请表_演示公司甲.xlsx', rows: [['公司中文名称', '演示公司甲有限公司'], ['公司英文名称', 'Demo Alpha Devices Ltd.'], ['注册国家', '德国'], ['城市', '深圳'], ['邮政编码', '518000'], ['服务项目', '德国 WEEE 注册'], ['联系邮箱', 'alpha@example.test']] },
+      { short: '公司乙', filename: 'EPR申请表_演示公司乙.xlsx', rows: [['公司中文名称', '演示公司乙贸易有限公司'], ['公司英文名称', 'Demo Beta Trading Co.'], ['注册国家', '法国'], ['城市', '杭州'], ['邮政编码', '310000'], ['服务项目', '法国包装法注册'], ['联系邮箱', 'beta@example.test']] },
+      { short: '公司丙', filename: 'EPR申请表_演示公司丙.xlsx', rows: [['公司中文名称', '演示公司丙科技有限公司'], ['公司英文名称', 'Demo Gamma Technology Ltd.'], ['注册国家', '波兰'], ['城市', '苏州'], ['邮政编码', '215000'], ['服务项目', '波兰包装法注册'], ['联系邮箱', 'gamma@example.test']] },
+    ];
+    const initialWeee = [
+      { company: '演示公司甲有限公司', agent: '示例代理戊（演示）', country: '德国', program: '德国 WEEE', request: '新增品牌', brand: 'DemoBrandA', category: 'Kleingeräte, die in privaten Haushalten genutzt werden können', className: '第5类 · 小型设备', status: 'pending' },
+      { company: '演示公司乙贸易有限公司', agent: '示例代理戊（演示）', country: '德国', program: '德国 WEEE', request: '新增品牌', brand: 'DemoBrandB', category: 'Kleingeräte, die in privaten Haushalten genutzt werden können', className: '第5类 · 小型设备', status: 'pending' },
+      { company: '演示公司丙科技有限公司', agent: '示例代理戊（演示）', country: '德国', program: '德国 WEEE', request: '新增品牌', brand: 'DemoBrandC', category: 'Kleingeräte, die in privaten Haushalten genutzt werden können', className: '第5类 · 小型设备', status: 'pending' },
+      { company: '演示公司丁电器有限公司', agent: '示例代理戊（演示）', country: '德国', program: '德国 WEEE', request: '新增品牌', brand: 'DemoBrandC', category: 'Kleingeräte, die in privaten Haushalten genutzt werden können', className: '第5类 · 小型设备', status: 'confirmed' },
+      { company: '示例bb6632db有限公司', agent: '示例代理戊（演示）', country: '德国', program: '德国 WEEE', request: '新增品牌', brand: 'DemoBrandD', category: 'Kleingeräte, die in privaten Haushalten genutzt werden können', className: '第5类 · 小型设备', status: 'confirmed' },
+    ];
+    const mails = [
+      { id: 'weee-demo', project: '德国 WEEE', status: 'pending', sender: 'audit-demo@example.test', date: '2026-08-26 17:25', subject: '5 个主体德国 WEEE 新增品牌', count: 5, summary: '5 条业务明细 · 5 个品牌/品类项目', body: '你好，\n\n请协助处理以下 5 家公司的德国 WEEE 新增品牌。\n\n演示公司甲有限公司：品牌 DemoBrandA，第五类\n演示公司乙贸易有限公司：品牌 DemoBrandB，第五类\n演示公司丙科技有限公司：品牌 DemoBrandC，第五类\n演示公司丁电器有限公司：品牌 DemoBrandC，第五类\n示例bb6632db有限公司：品牌 DemoBrandD，第五类\n\n申请资料已放在压缩包中。\n\n此邮件仅用于界面演示。', weee: initialWeee.map(item => ({ ...item })), attachments: ['三家公司EPR申请资料.zip', '德国WEEE新增品牌.xlsx'] },
+      { id: 'pack-demo', project: '比利时 / 波兰包装法', status: 'confirmed', sender: 'review-demo@example.test', date: '2026-08-26 16:20', subject: '两家主体注册比利时与波兰包装法', count: 2, summary: '2 条业务明细 · 字段已确认', body: '请为演示公司乙贸易有限公司办理比利时包装法注册，为演示公司丙科技有限公司办理波兰包装法注册。附件中含对应的 EPR 申请表。', attachments: ['两家公司申请表.zip'] },
+      { id: 'battery-demo', project: '德国电池法', status: 'review', sender: 'intake-demo@example.test', date: '2026-08-26 15:51', subject: '德国电池法年度申报信息补充', count: 1, summary: '1 条业务明细 · 客户名称待核对', body: '请协助更新年度申报资料。正文与附件中的公司名称不完全一致，请人工核实后确认。', attachments: ['年度申报资料.xlsx'] },
+      { id: 'weee-review-demo', project: '德国 WEEE', status: 'review', sender: 'service-demo@example.test', date: '2026-08-26 14:10', subject: 'WEEE 新增类目申请', count: 1, summary: '1 条 WEEE 明细 · 品类需要人工判断', body: '新增类目：电气与电子设备废料-大型设备（光伏面板除外）。请核对品牌和分类。', weee: [{ ...initialWeee[0], company: '示例8f7c1c39有限公司', brand: '示例品牌', category: '电气与电子设备废料-大型设备（光伏面板除外）', className: '第4类 · 大型设备', status: 'pending' }], attachments: ['类目申请表.xlsx'] },
+      { id: 'filter-demo', project: '阶段一过滤', status: 'filtered', sender: 'notice-demo@example.test', date: '2026-08-26 13:34', subject: '系统通知：资料已收悉', count: 0, summary: '规则判定为非询单 · 可回看过滤依据', body: '本邮件用于展示过滤队列的追溯状态。', attachments: [] },
+    ];
+    const appState = {
+      selectedMail: 'weee-demo',
+      selectedDetail: 0,
+      selectedField: 'company',
+      tab: 'business',
+      filter: 'all',
+      view: 'inbox',
+      selectedIds: new Set(),
+      search: '',
+      formIndex: 0,
+      confirmAction: null,
+      removedMail: null,
+      events: ['已归档邮件与附件', '完成字段初步提取', '待人工确认 3 个品牌/品类项目'],
+      dateStart: localStorage.getItem('demo-date-start') || '2026-08-26',
+      dateEnd: localStorage.getItem('demo-date-end') || '2026-08-26',
+    };
+    let toastTimer;
+
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    const statusText = status => ({ pending: '待确认', review: '待复核', confirmed: '已完成', filtered: '已过滤' }[status] || '待处理');
+    const currentMail = () => mails.find(mail => mail.id === appState.selectedMail) || mails[0];
+    const currentItem = () => currentMail()?.weee?.[appState.selectedDetail] || null;
+    const fieldLabel = key => fields.find(field => field.key === key)?.label || '字段';
+    const selectedFieldValue = () => {
+      const item = currentItem();
+      const mail = currentMail();
+      if (item) return item[appState.selectedField] || '';
+      return mail?.fields?.[appState.selectedField] || '';
+    };
+    function toast(message, actionText = '', action = null) {
+      const el = document.getElementById('toast');
+      document.getElementById('toastText').textContent = message;
+      const button = document.getElementById('toastAction');
+      button.hidden = !actionText;
+      button.textContent = actionText;
+      button.onclick = () => { if (action) action(); el.classList.remove('visible'); };
+      el.classList.add('visible');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('visible'), 3600);
+    }
+    function currentDateLabel() {
+      const start = document.getElementById('dateStart').value;
+      const end = document.getElementById('dateEnd').value;
+      return !start && !end ? '全部日期' : `${start || '不限起始'} 至 ${end || '不限结束'}`;
+    }
+    function visibleMails() {
+      const query = appState.search.trim().toLowerCase();
+      return mails.filter(mail => {
+        if (appState.view === 'weee' && !mail.project.includes('WEEE')) return false;
+        if (appState.view === 'filtered' && mail.status !== 'filtered') return false;
+        if (appState.view === 'missing' && mail.id !== 'battery-demo') return false;
+        if (appState.filter !== 'all' && mail.status !== appState.filter) return false;
+        if (query && !`${mail.subject} ${mail.sender} ${mail.project} ${mail.body}`.toLowerCase().includes(query)) return false;
+        return true;
+      });
+    }
+    function renderQueue() {
+      const list = document.getElementById('queueList');
+      const visible = visibleMails();
+      document.getElementById('queueCount').textContent = `${visible.length} 封`;
+      document.getElementById('selectedCount').textContent = `已选 ${appState.selectedIds.size} 封`;
+      if (!visible.length) {
+        list.innerHTML = '<div class="empty-state">没有符合条件的邮件<br><span style="font-size:12px">可以更换状态筛选或缩短搜索词。</span></div>';
+      } else {
+        list.innerHTML = visible.map(mail => `<article class="queue-item ${mail.id === appState.selectedMail ? 'selected' : ''}" data-mail="${esc(mail.id)}">
+          <input class="queue-check" type="checkbox" data-select-mail="${esc(mail.id)}" aria-label="选择此邮件" ${appState.selectedIds.has(mail.id) ? 'checked' : ''}>
+          <div data-open-mail="${esc(mail.id)}"><div class="queue-subject">${esc(mail.subject)}</div><div class="queue-meta"><span>${esc(mail.sender)}</span><span>${esc(mail.date)}</span></div><div class="queue-foot"><span class="small-note">${esc(mail.summary)}</span><span class="status ${mail.status}">${statusText(mail.status)}</span></div></div>
+        </article>`).join('');
+      }
+      document.getElementById('bulkConfirm').disabled = appState.selectedIds.size === 0;
+      document.getElementById('bulkConfirm').textContent = `批量确认（${appState.selectedIds.size}）`;
+      document.getElementById('bulkFilter').disabled = appState.selectedIds.size === 0;
+      document.getElementById('bulkFilter').textContent = `转为已过滤（${appState.selectedIds.size}）`;
+      document.querySelectorAll('[data-filter]').forEach(button => button.classList.toggle('active', button.dataset.filter === appState.filter));
+      document.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active', button.dataset.view === appState.view));
+    }
+    function renderHeader() {
+      const mail = currentMail();
+      const item = currentItem();
+      const hasReview = mail.status === 'review';
+      document.getElementById('mailHead').innerHTML = `<div class="mail-eyebrow"><span class="mail-project">${esc(mail.project)} · ${mail.weee ? 'WEEE 专项' : '邮件复核'}</span><span class="status ${mail.status}">${statusText(mail.status)}</span></div>
+        <h1 class="mail-title">${esc(mail.subject)}</h1>
+        <div class="mail-meta"><span>发件人：${esc(mail.sender)}</span><span>时间：${esc(mail.date)}</span><span>邮件编号：DEMO-${esc(mail.id.toUpperCase())}</span></div>
+        <div class="mail-summary">${esc(mail.summary)} · 附件 ${mail.attachments.length} 个 · 当前明细 ${mail.weee ? `${mail.weee.length} 条` : '1 条'}</div>
+        ${hasReview ? '<div class="review-hint"><strong>需要核对</strong><span>示例数据存在字段不一致，先确认来源再继续；演示中的修改不会写入真实系统。</span></div>' : ''}
+        <div class="action-bar"><button class="btn small" data-action="editDetail">修正明细</button><button class="btn small" data-action="confirmAgent">${item?.agent ? '确认代理' : '补全代理'}</button><button class="btn small primary" data-action="confirmBusiness">${mail.weee ? '确认当前品牌/品类' : '整理完成'}</button>
+          <details class="more-actions"><summary>更多操作</summary><div class="more-menu"><button data-action="returnReview">退回复核</button><button data-action="addDetail">新增明细</button><button data-action="deleteProject">删除当前明细</button><button data-action="filterMail">转为已过滤</button><button class="danger-text" data-action="deleteMail">删除整封邮件</button></div></details>
+        </div>`;
+      document.getElementById('stageRow').innerHTML = ['邮件归档','附件盘点','人工复核','阶段二比对'].map((label,index) => `<div class="stage-step ${index < 2 ? 'done' : index === 2 ? 'current' : ''}"><span class="stage-mark">${index < 2 ? '✓' : index + 1}</span><span>${label}</span></div>`).join('');
+      document.querySelectorAll('[data-tab]').forEach(button => button.classList.toggle('active', button.dataset.tab === appState.tab));
+      document.getElementById('dateCaption').textContent = `邮件日期：${currentDateLabel()}`;
+    }
+    function renderFieldBoard(item) {
+      return `<div class="field-board">${fields.map(field => `<button class="field-chip ${appState.selectedField === field.key ? 'active' : ''}" data-field="${field.key}"><span class="field-label">${field.label}</span><span class="field-value ${item[field.key] ? '' : 'field-empty'}">${esc(item[field.key] || '待确认')}</span></button>`).join('')}</div>`;
+    }
+    function renderWeeeRows(mail) {
+      return `<div class="weee-rows">${mail.weee.map((item,index) => {
+        const active = index === appState.selectedDetail;
+        const detailStatus = item.status === 'confirmed' ? 'confirmed' : 'pending';
+        return `<section class="weee-row ${active ? 'selected' : ''}">
+          <button class="weee-row-head" data-select-weee="${index}" aria-expanded="${active}"><span class="weee-company">${index + 1}. ${esc(item.company)}</span><span class="weee-brand">${esc(item.brand || '待补品牌')}</span><span class="weee-class">${esc(item.className || '待选类别')}</span><span class="status ${detailStatus}">${statusText(item.status)}</span></button>
+          ${active ? `<div class="weee-editor">
+            <div class="form-field"><label for="brandInput">品牌</label><input id="brandInput" data-edit-weee="brand" value="${esc(item.brand)}" /></div>
+            <div class="form-field"><label for="categoryInput">邮件/附件原始品类</label><input id="categoryInput" data-edit-weee="category" value="${esc(item.category)}" /></div>
+            <div class="form-field"><label for="classSelect">德国 ElektroG 分类</label><select id="classSelect" data-edit-weee="className"><option ${item.className.startsWith('第1类') ? 'selected' : ''}>第1类 · 热交换设备</option><option ${item.className.startsWith('第2类') ? 'selected' : ''}>第2类 · 屏幕设备</option><option ${item.className.startsWith('第3类') ? 'selected' : ''}>第3类 · 灯</option><option ${item.className.startsWith('第4类') ? 'selected' : ''}>第4类 · 大型设备</option><option ${item.className.startsWith('第5类') ? 'selected' : ''}>第5类 · 小型设备</option><option ${item.className.startsWith('第6类') ? 'selected' : ''}>第6类 · 小型 IT 和通讯设备</option></select></div>
+            <div class="weee-actions"><span class="draft-state saved" id="draftState">草稿已保存 · 单项独立确认</span><span style="display:flex;gap:6px"><button class="btn tiny danger" data-action="deleteWeeeItem" data-index="${index}">删除此项</button><button class="btn tiny primary" data-action="confirmWeeeItem" data-index="${index}">${item.status === 'confirmed' ? '已确认' : '确认此品牌/品类'}</button></span></div>
+          </div>` : ''}
+        </section>`;
+      }).join('')}</div>`;
+    }
+    function renderGenericDetail(mail) {
+      mail.fields ||= { company: '示例5d056b69有限公司', agent: '邮件代理（演示）', country: '比利时', program: mail.project, request: '注册' };
+      return `<div class="business-card selected"><div class="business-card-head"><strong>业务明细 · ${esc(mail.project)}</strong><span class="status ${mail.status}">${statusText(mail.status)}</span></div><div class="business-fields">${fields.map(field => `<button class="field-chip ${appState.selectedField === field.key ? 'active' : ''}" data-field="${field.key}"><span class="field-label">${field.label}</span><span class="field-value">${esc(mail.fields[field.key] || '待确认')}</span></button>`).join('')}</div><div class="business-actions"><button class="btn tiny" data-action="editDetail">修改字段</button><button class="btn tiny primary" data-action="confirmBusiness">${mail.status === 'confirmed' ? '已确认' : '确认此业务'}</button></div></div>`;
+    }
+    function renderReviewContent() {
+      const mail = currentMail();
+      const target = document.getElementById('reviewContent');
+      if (appState.tab === 'mail') {
+        target.innerHTML = `<div class="content-intro"><strong>邮件原文</strong><span>保留原始内容，只读查看</span></div><div class="raw-email">${esc(mail.body)}</div><div class="detail-list-head"><h3>附件清单</h3><span>${mail.attachments.length} 个附件</span></div><div>${mail.attachments.map(name => `<button class="btn small" style="margin:0 6px 6px 0" data-preview-file="${esc(name)}">${esc(name)} · 预览</button>`).join('') || '<span class="field-empty">无附件</span>'}</div>`;
+        return;
+      }
+      if (appState.tab === 'history') {
+        target.innerHTML = `<div class="content-intro"><strong>操作记录</strong><span>按时间倒序 · 演示记录</span></div><div class="history-list">${appState.events.slice().reverse().map((event,index) => `<div class="history-entry"><strong>${esc(event)}</strong><time>2026-08-26 ${index ? '17:22' : '17:25'} · 本地工作台</time></div>`).join('')}</div>`;
+        return;
+      }
+      if (mail.weee) {
+        const item = currentItem();
+        target.innerHTML = `<div class="content-intro"><strong>业务字段 <span style="color:var(--muted);font-weight:400">· 点字段查看右侧证据</span></strong><span>明细 ${appState.selectedDetail + 1} / ${mail.weee.length}</span></div>${renderFieldBoard(item)}<div class="detail-list-head"><h3>德国 WEEE 品牌 / 品类项目</h3><span>每一条单独保存、单独确认</span></div>${renderWeeeRows(mail)}<div class="evidence-note" style="margin-top:10px">确认一条只完成当前品牌/品类项目。其他未确认项目仍留在待办中；阶段二候选数随确认数更新。</div>`;
+      } else {
+        target.innerHTML = `<div class="content-intro"><strong>业务字段 <span style="color:var(--muted);font-weight:400">· 点字段查看右侧证据</span></strong><span>明细 ${appState.selectedDetail + 1} / ${mail.count || 1}</span></div>${renderGenericDetail(mail)}<div class="evidence-note" style="margin-top:10px">字段确认只更新当前业务明细；同封邮件的其他业务不会被自动完成。</div>`;
+      }
+    }
+    function evidenceValues(mail, item, key) {
+      const company = item?.company || mail.fields?.company || '示例5d056b69有限公司';
+      const values = {
+        company: {
+          epr: eprForms[appState.selectedDetail % eprForms.length].rows[0][1],
+          body: `${company}（邮件正文中的公司名称）`, subject: mail.subject.includes('WEEE') ? '邮件标题仅说明“5 个主体”，未逐一列出公司名' : company,
+          filename: '三家公司EPR申请资料.zip；德国WEEE新增品牌.xlsx',
+        },
+        agent: { epr: '申请表未填写代理', body: item?.agent || mail.fields?.agent || '正文未出现代理名称', subject: '标题未出现代理名称', filename: '附件名称未出现代理名称' },
+        country: { epr: eprForms[appState.selectedDetail % eprForms.length].rows[2][1], body: item?.country || mail.fields?.country || '正文未明确国家', subject: '标题未出现国家字段', filename: '附件名称未出现国家字段' },
+        program: { epr: eprForms[appState.selectedDetail % eprForms.length].rows[5][1], body: item?.program || mail.project, subject: mail.project, filename: '三家公司EPR申请资料.zip' },
+        request: { epr: '申请表未填写具体需求', body: item?.request || mail.fields?.request || '正文未说明需求', subject: mail.subject.includes('新增') ? '新增' : '标题未明确需求', filename: '附件名称未出现需求字段' },
+        brand: { epr: '申请表未填写品牌', body: item?.brand || '正文未出现品牌', subject: '标题未逐一列出品牌', filename: '德国WEEE新增品牌.xlsx' },
+        category: { epr: '申请表未填写 WEEE 品类', body: item?.category || '正文未出现品类', subject: '标题未出现品类', filename: '德国WEEE新增品牌.xlsx' },
+        className: { epr: '申请表未填写 ElektroG 类别', body: item?.className || '正文未出现分类结果', subject: '标题未出现类别', filename: '德国WEEE新增品牌.xlsx' },
+      };
+      return values[key] || values.company;
+    }
+    function renderEvidence() {
+      const mail = currentMail();
+      const item = currentItem();
+      const key = appState.selectedField;
+      const sources = evidenceValues(mail, item, key);
+      const sourceOrder = [
+        { key: 'epr', title: 'EPR 申请表', meta: '附件表格 · 优先级 1' },
+        { key: 'body', title: '邮件正文', meta: '正文内容 · 优先级 2' },
+        { key: 'subject', title: '邮件标题', meta: '邮件主题 · 优先级 3' },
+        { key: 'filename', title: '附件名称', meta: '附件清单 · 优先级 4' },
+      ];
+      const primary = sourceOrder.find(source => sources[source.key] && !String(sources[source.key]).includes('未出现') && !String(sources[source.key]).includes('未填写'))?.key;
+      document.getElementById('currentFieldValue').textContent = `${fieldLabel(key)}：${selectedFieldValue() || '待确认'}`;
+      document.getElementById('evidenceSources').innerHTML = `<div class="evidence-group-title"><h3>该字段的所有来源</h3><span>高优先级在前</span></div>${sourceOrder.map(source => {
+        const value = sources[source.key] || '';
+        const isPrimary = source.key === primary;
+        const empty = !value || value.includes('未出现') || value.includes('未填写');
+        return `<article class="source-card ${isPrimary ? 'primary-source' : ''}"><div class="source-head"><span class="source-name">${source.title}</span>${isPrimary ? '<span class="priority-tag">优先采用</span>' : `<span class="source-tag">${source.meta}</span>`}</div><div class="source-value ${empty ? 'source-empty' : ''}">${esc(value || '未找到该字段')}</div><div class="source-meta">来源：${source.meta}</div></article>`;
+      }).join('')}`;
+      renderAttachments(mail);
+    }
+    function tableHTML(rows, full = false) {
+      if (full) return `<table class="full-table"><thead><tr><th>行</th><th>字段</th><th>内容</th></tr></thead><tbody>${rows.map((row,index) => `<tr><th>${index + 1}</th><td>${esc(row[0])}</td><td>${esc(row[1])}</td></tr>`).join('')}</tbody></table>`;
+      return `<div class="mini-table-wrap"><table class="mini-table"><tbody>${rows.map((row,index) => `<tr><th>${index + 1}</th><th>${esc(row[0])}</th><td>${esc(row[1])}</td></tr>`).join('')}</tbody></table></div>`;
+    }
+    function renderAttachments(mail) {
+      const files = mail.attachments || [];
+      document.getElementById('attachmentList').innerHTML = files.length ? files.map(name => `<div class="attachment-line"><div class="attachment-name-wrap"><span class="attachment-name">${esc(name)}</span><span class="attachment-meta">${name.endsWith('.zip') ? '压缩包 · 3 份 EPR 申请表' : '表格附件 · 品牌与类别清单'}</span></div><div class="attachment-actions"><button class="text-button" data-preview-file="${esc(name)}">预览</button><button class="text-button" data-download-file="${esc(name)}">下载</button></div></div>`).join('') : '<div class="empty-state">此邮件没有附件</div>';
+      const zip = files.find(name => name.endsWith('.zip'));
+      const formArea = document.getElementById('formPreviews');
+      document.querySelector('.forms-heading').style.display = zip ? 'flex' : 'none';
+      formArea.innerHTML = zip ? eprForms.map((form,index) => `<article class="form-preview"><div class="form-preview-head"><strong>${esc(index + 1)} · ${esc(form.filename)}</strong><span>申请表全量预览</span></div>${tableHTML(form.rows)}</article>`).join('') : '';
+      const xlsx = files.find(name => name.endsWith('.xlsx'));
+      document.getElementById('xlsxPreview').innerHTML = xlsx ? `<div class="forms-heading"><strong>工作表：Sheet1 · 德国 WEEE 品牌类别</strong><span>5 行 · 已解析</span></div>${tableHTML(mail.weee?.map((item,index) => [`${item.company} · ${item.brand}`, item.className]) || [['公司', '示例5d056b69有限公司']], false)}` : '';
+    }
+    function renderAll() {
+      renderQueue();
+      renderHeader();
+      renderReviewContent();
+      renderEvidence();
+      document.getElementById('dateStart').value = appState.dateStart;
+      document.getElementById('dateEnd').value = appState.dateEnd;
+    }
+    function selectMail(id) {
+      if (!mails.some(mail => mail.id === id)) return;
+      appState.selectedMail = id;
+      appState.selectedDetail = 0;
+      appState.selectedField = 'company';
+      appState.tab = 'business';
+      document.getElementById('reviewScroll').scrollTop = 0;
+      document.getElementById('evidenceScroll').scrollTop = 0;
+      renderAll();
+      document.body.classList.remove('queue-open');
+    }
+    function updateSelectedField(key) {
+      appState.selectedField = key;
+      renderReviewContent();
+      renderEvidence();
+    }
+    function openPreview(filename) {
+      appState.formIndex = 0;
+      document.getElementById('previewTitle').textContent = `附件预览 · ${filename}`;
+      document.getElementById('previewSubtitle').textContent = filename.endsWith('.zip') ? '压缩包内 3 份 EPR 申请表，可逐个切换查看' : '德国 WEEE 品牌类别表 · 演示数据';
+      renderPreviewBody(filename);
+      document.getElementById('previewOverlay').classList.add('open');
+      document.getElementById('previewOverlay').setAttribute('aria-hidden', 'false');
+    }
+    function renderPreviewBody(filename) {
+      const body = document.getElementById('previewBody');
+      if (filename.endsWith('.zip')) {
+        body.innerHTML = `<div class="form-tabs">${eprForms.map((form,index) => `<button class="form-tab ${index === appState.formIndex ? 'active' : ''}" data-form-index="${index}">${esc(form.short)} · 申请表 ${index + 1}</button>`).join('')}<button class="form-tab" data-action="showAllForms">全部三份</button></div><div id="selectedFormTable">${tableHTML(eprForms[appState.formIndex].rows, true)}</div><div class="evidence-note" style="margin-top:10px">当前文件：${esc(eprForms[appState.formIndex].filename)}。每份表格独立显示，切换不会关闭预览。</div>`;
+      } else {
+        const rows = currentMail().weee?.map((item,index) => [`${item.company} · ${item.brand}`, `${item.category} / ${item.className}`]) || [['客户公司', '示例5d056b69有限公司'], ['国家', '德国'], ['项目', '德国 WEEE']];
+        body.innerHTML = `<div class="evidence-group-title"><h3>Sheet1</h3><span>${rows.length} 行 · 左右滚动查看</span></div>${tableHTML(rows, true)}`;
+      }
+    }
+    function closePreview() {
+      document.getElementById('previewOverlay').classList.remove('open');
+      document.getElementById('previewOverlay').setAttribute('aria-hidden', 'true');
+    }
+    function openCorrection() {
+      const item = currentItem();
+      const mail = currentMail();
+      const values = item || mail.fields || { company: '', agent: '', country: '', program: '', request: '' };
+      const fieldsHtml = fields.map(field => `<div class="form-field copy-field"><label for="correct-${field.key}">${field.label}</label><input id="correct-${field.key}" data-correction-field="${field.key}" value="${esc(values[field.key] || '')}" /><button class="copy-btn" type="button" data-copy-field="correct-${field.key}">复制字段</button></div>`).join('');
+      document.getElementById('correctionFields').innerHTML = `${fieldsHtml}<div class="form-field" style="grid-column:1/-1"><label for="correct-brand">WEEE 品牌（如适用）</label><input id="correct-brand" data-correction-field="brand" value="${esc(item?.brand || '')}" /></div><div class="form-field" style="grid-column:1/-1"><label for="correct-category">WEEE 原始品类（如适用）</label><input id="correct-category" data-correction-field="category" value="${esc(item?.category || '')}" /></div>`;
+      const box = document.getElementById('correctionOverlay');
+      box.classList.add('open');
+      box.setAttribute('aria-hidden', 'false');
+      const dialog = box.querySelector('.correction-dialog');
+      dialog.style.left = '50%'; dialog.style.top = '50%'; dialog.style.transform = 'translate(-50%, -50%)';
+    }
+    function closeCorrection() {
+      const box = document.getElementById('correctionOverlay');
+      box.classList.remove('open');
+      box.setAttribute('aria-hidden', 'true');
+    }
+    function saveCorrection() {
+      const mail = currentMail();
+      const item = currentItem();
+      document.querySelectorAll('[data-correction-field]').forEach(input => {
+        const key = input.dataset.correctionField;
+        const target = item || mail.fields;
+        if (target) target[key] = input.value.trim();
+      });
+      appState.events.push('人工修正字段 · 草稿已保存');
+      closeCorrection();
+      renderAll();
+      toast('当前明细已更新到演示草稿');
+    }
+    function openConfirm(title, copy, label, fn) {
+      document.getElementById('confirmTitle').textContent = title;
+      document.getElementById('confirmCopy').textContent = copy;
+      document.getElementById('confirmProceed').textContent = label;
+      appState.confirmAction = fn;
+      document.getElementById('confirmOverlay').classList.add('open');
+      document.getElementById('confirmOverlay').setAttribute('aria-hidden', 'false');
+    }
+    function closeConfirm() {
+      document.getElementById('confirmOverlay').classList.remove('open');
+      document.getElementById('confirmOverlay').setAttribute('aria-hidden', 'true');
+      appState.confirmAction = null;
+    }
+    function confirmCurrent() {
+      const mail = currentMail();
+      const item = currentItem();
+      if (item) {
+        item.status = 'confirmed';
+        appState.events.push(`已确认品牌/品类：${item.brand || '未命名品牌'}`);
+        document.getElementById('queryCount').textContent = String(Number(document.getElementById('queryCount').textContent) + 1);
+        document.getElementById('stageTwoCount').textContent = document.getElementById('queryCount').textContent;
+        const remaining = mail.weee.some(entry => entry.status !== 'confirmed');
+        mail.status = remaining ? 'pending' : 'confirmed';
+        toast(remaining ? '当前品牌/品类已确认；其他明细仍在待办中' : '该邮件的 WEEE 项目已全部确认');
+      } else {
+        mail.status = 'confirmed';
+        appState.events.push(`已确认业务明细：${mail.project}`);
+        toast('当前业务明细已确认；原型未提交工单');
+      }
+      renderAll();
+    }
+    function doAction(action) {
+      const mail = currentMail();
+      if (action === 'deleteMail') {
+        openConfirm('删除整封邮件？', '此操作会从当前演示队列移除整封邮件。真实系统中需要保留审计记录；本原型不会影响真实数据。', '删除邮件', () => {
+          const index = mails.findIndex(item => item.id === mail.id);
+          if (index >= 0) appState.removedMail = { mail: mails.splice(index, 1)[0], index };
+          appState.selectedMail = mails[0]?.id || '';
+          renderAll();
+          toast('演示邮件已移出队列', '撤销', () => { if (appState.removedMail) { mails.splice(appState.removedMail.index, 0, appState.removedMail.mail); appState.selectedMail = appState.removedMail.mail.id; appState.removedMail = null; renderAll(); } });
+        });
+      } else if (action === 'deleteWeeeItem' || action === 'deleteProject') {
+        const index = action === 'deleteWeeeItem' ? Number(eventTarget()?.dataset.index ?? appState.selectedDetail) : appState.selectedDetail;
+        openConfirm('删除当前业务明细？', '仅移除当前明细，不影响同封邮件的其他明细。此处只模拟操作。', '删除明细', () => {
+          if (mail.weee?.length) {
+            mail.weee.splice(index, 1);
+            appState.selectedDetail = Math.max(0, Math.min(index, mail.weee.length - 1));
+          } else { mail.status = 'filtered'; }
+          renderAll();
+          toast('演示明细已删除');
+        });
+      } else if (action === 'filterMail') {
+        openConfirm('转为已过滤？', '邮件会从待办工作视图移入过滤记录，原始邮件与判定依据仍可回看。', '转为过滤', () => { mail.status = 'filtered'; renderAll(); toast('已移入过滤视图（演示）'); });
+      } else if (action === 'returnReview') {
+        mail.status = 'review'; appState.events.push('退回复核 · 需要进一步核对'); renderAll(); toast('已退回复核队列（演示）');
+      } else if (action === 'addDetail') {
+        if (mail.weee) {
+          mail.weee.push({ company: '示例167e53b4有限公司', agent: '待确认', country: '德国', program: '德国 WEEE', request: '新增品牌', brand: '', category: '', className: '待人工选择', status: 'pending' });
+          appState.selectedDetail = mail.weee.length - 1;
+        } else {
+          mail.count += 1;
+        }
+        renderAll(); toast('已新增一条演示明细');
+      } else if (action === 'confirmAgent') {
+        const item = currentItem(); if (item && !item.agent) item.agent = '代理（演示）';
+        appState.events.push('代理归属已核对'); renderAll(); toast('代理字段已确认（演示）');
+      }
+    }
+    let activeEventTarget = null;
+    const eventTarget = () => activeEventTarget;
+    document.addEventListener('click', async event => {
+      const target = event.target.closest('[data-action],[data-view],[data-filter],[data-tab],[data-field],[data-open-mail],[data-select-weee],[data-form-index],[data-preview-file],[data-download-file],[data-copy-field],[data-select-mail]');
+      if (!target) return;
+      activeEventTarget = target;
+      if (target.dataset.openMail) selectMail(target.dataset.openMail);
+      else if (target.dataset.selectMail) { appState.selectedIds.has(target.dataset.selectMail) ? appState.selectedIds.delete(target.dataset.selectMail) : appState.selectedIds.add(target.dataset.selectMail); renderQueue(); }
+      else if (target.dataset.view) { appState.view = target.dataset.view; appState.filter = 'all'; renderQueue(); if (!visibleMails().some(mail => mail.id === appState.selectedMail) && visibleMails()[0]) selectMail(visibleMails()[0].id); }
+      else if (target.dataset.filter) { appState.filter = target.dataset.filter; renderQueue(); }
+      else if (target.dataset.tab) { appState.tab = target.dataset.tab; renderHeader(); renderReviewContent(); }
+      else if (target.dataset.field) updateSelectedField(target.dataset.field);
+      else if (target.dataset.selectWeee !== undefined) { appState.selectedDetail = Number(target.dataset.selectWeee); renderReviewContent(); renderEvidence(); }
+      else if (target.dataset.formIndex !== undefined) { appState.formIndex = Number(target.dataset.formIndex); renderPreviewBody(document.getElementById('previewTitle').textContent.split(' · ').slice(1).join(' · ')); }
+      else if (target.dataset.previewFile) openPreview(target.dataset.previewFile);
+      else if (target.dataset.downloadFile) toast(`演示中未连接真实文件下载：${target.dataset.downloadFile}`);
+      else if (target.dataset.copyField) {
+        const input = document.getElementById(target.dataset.copyField);
+        try { await navigator.clipboard.writeText(input.value); toast(`已复制${input.previousElementSibling?.textContent || '字段'}`); }
+        catch { input.select(); document.execCommand('copy'); toast('字段已复制'); }
+      }
+      else if (target.dataset.action) {
+        const action = target.dataset.action;
+        if (action === 'closePreview') closePreview();
+        else if (action === 'closeCorrection') closeCorrection();
+        else if (action === 'cancelConfirm') closeConfirm();
+        else if (action === 'editDetail') openCorrection();
+        else if (action === 'saveCorrection') saveCorrection();
+        else if (action === 'confirmBusiness' || action === 'confirmWeeeItem') confirmCurrent();
+        else if (action === 'deleteWeeeItem' || action === 'deleteProject' || action === 'deleteMail' || action === 'filterMail' || action === 'returnReview' || action === 'addDetail' || action === 'confirmAgent') doAction(action);
+        else if (action === 'export') toast(`将导出 ${currentDateLabel()} 的复核结果（原型示意，不生成文件）`);
+        else if (action === 'refresh') toast('当前为静态演示数据，刷新不会打断所选明细');
+        else if (action === 'stageTwo') toast(`${document.getElementById('stageTwoCount').textContent} 条已确认明细可进入阶段二（演示）`);
+        else if (action === 'selectVisible') { visibleMails().forEach(mail => appState.selectedIds.add(mail.id)); renderQueue(); }
+        else if (action === 'clearSelection') { appState.selectedIds.clear(); renderQueue(); }
+        else if (action === 'bulkConfirm') { appState.selectedIds.forEach(id => { const mail = mails.find(item => item.id === id); if (mail && mail.status !== 'review') mail.status = 'confirmed'; }); appState.selectedIds.clear(); renderAll(); toast('符合条件的演示邮件已批量确认'); }
+        else if (action === 'bulkFilter') { appState.selectedIds.forEach(id => { const mail = mails.find(item => item.id === id); if (mail) mail.status = 'filtered'; }); appState.selectedIds.clear(); renderAll(); toast('所选演示邮件已移入过滤视图'); }
+        else if (action === 'clearDates') { appState.dateStart = ''; appState.dateEnd = ''; document.getElementById('dateStart').value = ''; document.getElementById('dateEnd').value = ''; localStorage.setItem('demo-date-start', ''); localStorage.setItem('demo-date-end', ''); document.getElementById('dateCaption').textContent = `邮件日期：${currentDateLabel()}`; toast('当前原型日期筛选已清除'); }
+        else if (action === 'toggleQueue') document.body.classList.toggle('queue-open');
+        else if (action === 'toggleEvidence') document.body.classList.toggle('evidence-open');
+        else if (action === 'showAllForms') { document.getElementById('previewBody').innerHTML = `<div class="content-intro"><strong>压缩包内全部 EPR 申请表</strong><span>3 份 · 逐表完整呈现</span></div>${eprForms.map((form,index) => `<article class="form-preview" style="margin-bottom:12px"><div class="form-preview-head"><strong>${index + 1} · ${esc(form.filename)}</strong><span>完整表格</span></div>${tableHTML(form.rows, true)}</article>`).join('')}`; }
+        else if (action === 'confirmProceed') { const callback = appState.confirmAction; closeConfirm(); callback?.(); }
+      }
+      if (target.closest('.more-actions')) target.closest('.more-actions').open = false;
+    });
+
+    document.addEventListener('input', event => {
+      const target = event.target;
+      if (target.id === 'mailSearch') { appState.search = target.value; renderQueue(); }
+      if (target.dataset.editWeee) {
+        const item = currentItem(); if (item) item[target.dataset.editWeee] = target.value;
+        const draft = document.getElementById('draftState');
+        if (draft) { draft.textContent = '草稿已保存 · 本原型仅保存在当前页面'; draft.classList.add('saved'); }
+        renderEvidence();
+      }
+      if (target.dataset.correctionField) {
+        const mail = currentMail(); const item = currentItem(); const destination = item || mail.fields;
+        if (destination) destination[target.dataset.correctionField] = target.value;
+      }
+    });
+    document.addEventListener('change', event => {
+      const target = event.target;
+      if (target.id === 'dateStart' || target.id === 'dateEnd') {
+        if (target.id === 'dateStart') appState.dateStart = target.value; else appState.dateEnd = target.value;
+        localStorage.setItem('demo-date-start', appState.dateStart); localStorage.setItem('demo-date-end', appState.dateEnd);
+        document.getElementById('dateCaption').textContent = `邮件日期：${currentDateLabel()}`;
+        toast(`日期筛选已更新：${currentDateLabel()}`);
+      }
+      if (target.dataset.editWeee) {
+        const item = currentItem(); if (item) item[target.dataset.editWeee] = target.value;
+        renderReviewContent(); renderEvidence();
+      }
+    });
+    document.getElementById('confirmProceed').addEventListener('click', () => { const callback = appState.confirmAction; closeConfirm(); callback?.(); });
+    ['previewOverlay','correctionOverlay','confirmOverlay'].forEach(id => document.getElementById(id).addEventListener('click', event => { if (event.target.id === id) { if (id === 'previewOverlay') closePreview(); if (id === 'correctionOverlay') closeCorrection(); if (id === 'confirmOverlay') closeConfirm(); } }));
+
+    function enableDrag(handle) {
+      const kind = handle.dataset.dragHandle;
+      const dialog = handle.closest('.dialog');
+      handle.addEventListener('pointerdown', event => {
+        if (event.target.closest('button')) return;
+        const rect = dialog.getBoundingClientRect();
+        dialog.style.transform = 'none'; dialog.style.left = `${rect.left}px`; dialog.style.top = `${rect.top}px`;
+        handle.setPointerCapture(event.pointerId);
+        const startX = event.clientX; const startY = event.clientY; const left = rect.left; const top = rect.top;
+        const move = moveEvent => {
+          const maxLeft = Math.max(8, window.innerWidth - dialog.offsetWidth - 8);
+          const maxTop = Math.max(8, window.innerHeight - 72);
+          dialog.style.left = `${Math.min(maxLeft, Math.max(8, left + moveEvent.clientX - startX))}px`;
+          dialog.style.top = `${Math.min(maxTop, Math.max(8, top + moveEvent.clientY - startY))}px`;
+        };
+        const finish = () => { handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', finish); };
+        handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', finish);
+      });
+    }
+    document.querySelectorAll('[data-drag-handle]').forEach(enableDrag);
+
+    renderAll();
+  </script>
+</body>
+</html>

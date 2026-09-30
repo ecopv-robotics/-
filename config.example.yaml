@@ -1,0 +1,49 @@
+# Copy to config.yaml (git-ignored), then configure locally.
+email:
+  imap_server: imap.example.invalid
+  imap_port: 993
+  address: ''
+  password: ''
+  mailbox: INBOX
+  audit_addresses: []
+  connect_timeout: 30
+  connect_retries: 3
+  cache_enabled: false
+  cache_dir: cache/mails
+workorder:
+  url: https://workorders.example.invalid
+  username: ''
+  password: ''
+  headless: false
+  browser_channel: msedge
+  timeout: 30
+  date_window_months: 1
+  customer_threshold: 85
+  query_interval_seconds: 3
+  query_cache_path: storage/query_cache.json
+  login_state_path: storage/login_state.json
+  agent_aliases: {}
+  selectors: {}
+llm:
+  enabled: true
+  api_key_env: DEEPSEEK_API_KEY
+  api_key: ''
+  base_url: https://api.deepseek.com
+  model: deepseek-chat
+  timeout: 60
+  max_tokens: 4096
+  temperature: 0.1
+  semantic_batch_size: 6
+  audit_log_path: logs/llm_calls.jsonl
+reference_tables:
+  internal_emails: data/internal_emails.xlsx
+  agent_emails: data/agent_emails.xlsx
+  project_names: data/project_names.xlsx
+output:
+  dir: output
+  categorized: true
+logging:
+  dir: logs
+  level: INFO
+ocr:
+  fallback: true
