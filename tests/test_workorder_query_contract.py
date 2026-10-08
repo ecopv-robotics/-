@@ -197,6 +197,28 @@ def test_query_response_must_include_exact_expected_date_window():
     checker._record_query_response(FakeResponse())
     assert checker._last_query_response_status == "date_mismatch"
 
+    checker._expected_query_date_window = None
+    checker._record_query_response(FakeResponse())
+    assert checker._last_query_response_status == "date_mismatch"
+    assert "没有确认完整日期范围" in checker._last_query_response_note
+
+
+def test_failed_date_entry_clears_previous_submitted_window():
+    checker = make_checker()
+    checker._expected_query_date_window = ("2026-07-26", "2026-09-26")
+
+    async def fill_date(field_name, _value, _selector):
+        return field_name == "下单开始日期"
+
+    checker._fill_date_input = fill_date
+    checker._log = lambda *_args, **_kwargs: None
+    result = asyncio.run(checker._fill_order_date_window(
+        ("2026-08-01", "2026-08-31")
+    ))
+
+    assert result is False
+    assert checker._expected_query_date_window is None
+
 
 def test_query_form_refuses_to_submit_when_date_controls_are_incomplete():
     checker = make_checker()
