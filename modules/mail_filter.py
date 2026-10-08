@@ -77,6 +77,23 @@ KEYWORDS_BUSINESS = {
     "拉脱维亚", "包装", "packaging", "verpackg", "ppwr", "battery", "batteries",
 }
 
+# 当前审核目标不包含德国一次性塑料税。只对“明确写出德国+一次性塑料项目”，
+# 且没有同时出现 WEEE/电池/包装目标项目的邮件做邮件级硬过滤；普通提及不触发。
+_GERMAN_SINGLE_USE_PLASTICS = re.compile(
+    r"(?:德国|german|germany).{0,48}(?:一次性塑料|单次使用塑料|single[\s-]?use plastics?|EWK[Ff]ondsG)"
+    r"|(?:一次性塑料|单次使用塑料|single[\s-]?use plastics?|EWK[Ff]ondsG).{0,48}(?:德国|german|germany)",
+    re.I | re.S,
+)
+_OTHER_TARGET_PROJECT = re.compile(
+    r"WEEE|ElektroG|电池法|电池|包装法|包装|VerpackG|PPWR|packaging|batter(?:y|ies)",
+    re.I,
+)
+
+
+def is_german_single_use_non_target(project: str, country: str = "") -> bool:
+    """Whether a normalized business row is the explicitly excluded German SUP tax project."""
+    return bool(_GERMAN_SINGLE_USE_PLASTICS.search(f"{country or ''} {project or ''}"))
+
 # 明确无关的关键词（出现这些且不含业务词 → 过滤）
 KEYWORDS_IRRELEVANT = {
     "账单", "invoice", "合同", "协议",
@@ -313,6 +330,22 @@ class MailFilter:
                 or has_attachment_request
             )
             has_target_action = has_action or has_request or has_attachment_request
+
+            # 德国一次性塑料税不是当前受理项目。仅在邮件明确描述该项目、且
+            # 没有同时出现其它目标项目时按邮件过滤；混合项目邮件不整封误删。
+            if (
+                has_target_action
+                and is_german_single_use_non_target(all_text)
+                and not _OTHER_TARGET_PROJECT.search(all_text)
+            ):
+                mail["filter_status"] = "filtered"
+                mail["filter_reason"] = "明确非目标项目：德国一次性塑料税"
+                mail["hard_filter"] = True
+                mail["llm_eligible"] = False
+                filtered_mails.append(mail)
+                self._log(f"过滤(明确非目标项目：德国一次性塑料税): {subject[:50]}")
+                continue
+
             has_certificate_notice = self._contains_any(subject_body, KEYWORDS_CERTIFICATE_NOTICE)
             has_certificate_completion = self._contains_any(
                 subject_body, KEYWORDS_CERTIFICATE_COMPLETION

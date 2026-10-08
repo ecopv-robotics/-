@@ -44,6 +44,8 @@ def inspect_row(row: Dict) -> List[dict]:
 
     company = str(row.get("客户", "") or "").strip()
     normalized_company = re.sub(r"[\s\-_]+", "", company).lower()
+    agent = str(row.get("代理", "") or "").strip()
+    normalized_agent = re.sub(r"[\s\-_]+", "", agent).lower()
 
     if not company:
         add_issue("company", "FIELD_MISSING", "客户公司名称为空")
@@ -73,10 +75,14 @@ def inspect_row(row: Dict) -> List[dict]:
         add_issue("company", "COMPANY_CODE_MIXED", "客户字段混入项目/证书类型或客户编号")
     elif re.search(r"(?:不能|不可|不得|不要).{0,8}(?:其它|其他)?公司", company):
         add_issue("company", "COMPANY_FORM_NOTE", "客户字段是表单说明句，不是真实公司名称")
+    elif normalized_agent and normalized_company == normalized_agent:
+        add_issue("company", "COMPANY_EQUALS_AGENT", "客户公司与代理名称完全相同，可能误把代理提取为客户")
 
     project = str(row.get("项目", "") or "").strip()
     if not project:
         add_issue("program", "FIELD_MISSING", "服务项目为空")
+    elif str(row.get("项目规范化状态", "") or "").strip().lower() in {"未匹配", "unmatched", "false"}:
+        add_issue("program", "PROJECT_UNMATCHED", "项目名无法匹配目标项目表，需人工确认业务范围")
     elif not _PROJECT_TYPE_RE.search(project):
         add_issue("program", "PROJECT_UNSUPPORTED", "服务项目未包含可识别的业务类型")
 

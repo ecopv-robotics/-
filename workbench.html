@@ -318,17 +318,28 @@
     .german-project-heading{font-size:13px;margin:0 0 10px;padding:7px 2px;color:var(--green);border-bottom:1px solid var(--line)}
     .german-project-group+.german-project-group{margin-top:20px}
   </style>
+  <style>
+    .main{position:relative;min-height:100vh}
+    .main.console-open>.top,.main.console-open>.container{display:none}
+    .run-console-page{position:absolute;inset:0;min-height:100vh;background:var(--bg);z-index:5}
+    .run-console-page[hidden]{display:none}
+    .run-console-page iframe{display:block;width:100%;height:100vh;min-height:100vh;border:0;background:var(--bg)}
+    .weee-item-form{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+    .weee-item-form>div:nth-child(3){grid-column:1/-1}
+    .german-detail-body .weee-item-form{grid-template-columns:minmax(0,1fr)}
+    @media(max-width:780px){.weee-item-form{grid-template-columns:1fr}}
+  </style>
 </head>
 <body>
 <div class="shell">
   <aside class="side">
     <div class="brand"><span class="brand-mark" aria-hidden="true">✉</span><span class="brand-copy">ECOPV<small>邮件审核工作台</small></span></div>
     <nav class="nav">
-      <a href="/run" id="run-console-link" title="运行控制台" aria-label="运行控制台" hidden style="display:none;color:inherit;text-decoration:none"><i>≡</i><span class="nav-label">运行控制台</span></a>
+      <button type="button" id="run-console-link" title="运行控制台" aria-label="运行控制台" aria-pressed="false" hidden><i>≡</i><span class="nav-label">运行控制台</span></button>
       <button class="active" data-view="inbox" title="询单复核" aria-label="询单复核"><i>▦</i><span class="nav-label">询单复核</span></button>
-      <button data-view="weee" title="德国WEEE/电池法" aria-label="德国WEEE/电池法"><i>◈</i><span class="nav-label">德国WEEE/电池法</span><span id="weee-nav-count" class="nav-count"></span></button>
-      <button data-view="missing" title="漏单邮件" aria-label="漏单邮件"><i>⚠</i><span class="nav-label">漏单邮件</span><span id="missing-nav-count" class="nav-count"></span></button>
-      <button data-view="filtered" title="已过滤邮件" aria-label="已过滤邮件"><i>▥</i><span class="nav-label">已过滤邮件</span><span id="filtered-nav-count" class="nav-count"></span></button>
+      <button data-view="weee" title="德国WEEE/电池法" aria-label="德国WEEE/电池法"><i>◈</i><span class="nav-label">德国WEEE/电池法</span></button>
+      <button data-view="missing" title="漏单邮件" aria-label="漏单邮件"><i>⚠</i><span class="nav-label">漏单邮件</span></button>
+      <button data-view="filtered" title="已过滤邮件" aria-label="已过滤邮件"><i>▥</i><span class="nav-label">已过滤邮件</span></button>
     </nav>
     <button id="nav-toggle" title="展开导航" aria-label="展开导航" aria-expanded="false">»</button>
     <div class="side-foot">本机工作台<br>不会自动提交工单</div>
@@ -350,6 +361,9 @@
       </section>
       <div class="footnote">人工确认“整理完成”只表示邮件字段已核对，不等于工单系统已通过审核，也不会自动修改全局代理关系。</div>
     </div>
+    <section class="run-console-page" id="run-console-page" hidden aria-label="运行控制台子页面">
+      <iframe src="/run" title="阶段一和阶段二运行控制台" loading="lazy"></iframe>
+    </section>
   </main>
 </div>
 <div class="overlay" id="modal-overlay"><div class="modal" role="dialog" aria-modal="false" aria-labelledby="modal-title"><div class="modal-head" title="拖动标题栏移动窗口"><div class="modal-head-copy"><h2 id="modal-title">修正明细</h2></div><div class="modal-head-actions"><button class="btn small" id="modal-close" aria-label="关闭修正窗口">×</button></div></div><div class="modal-body"><div class="form-grid"><div class="field"><label for="f-company">客户公司</label><input id="f-company"/></div><div class="field"><label for="f-agent">代理</label><input id="f-agent"/></div><div class="field"><label for="f-country">国家</label><input id="f-country"/></div><div class="field"><label for="f-program">服务项目</label><input id="f-program" list="project-options"/></div><div class="field"><label for="f-request">具体业务</label><input id="f-request"/></div></div><p id="modal-error" role="alert"></p></div><div class="modal-foot"><button class="btn" id="modal-cancel">取消</button><button class="btn primary" id="modal-save">保存修改</button></div></div></div>
@@ -483,7 +497,7 @@
   function filteredMails(){return app.data?.filtered_mails||[]}
   function renderBulkButton(){const valid=new Set((app.data?.mails||[]).map(m=>m.id));app.selectedMailIds=new Set([...app.selectedMailIds].filter(id=>valid.has(id)));const n=app.selectedMailIds.size;const b=$('#bulk-confirm');if(b){b.disabled=app.view==='filtered'||app.filter==='confirmed'||n===0;b.textContent=`批量确认（${n}）`}const c=$('#selected-count');if(c)c.textContent=`已选${n}封`;const bar=$('#queue-selectbar');if(bar)bar.style.display=app.view==='filtered'?'none':'flex'}
   function bindQueueSelection(){document.querySelectorAll('[data-select-mail]').forEach(n=>{n.onclick=e=>e.stopPropagation();n.onchange=e=>{e.stopPropagation();if(n.checked)app.selectedMailIds.add(n.dataset.selectMail);else app.selectedMailIds.delete(n.dataset.selectMail);renderBulkButton()}});renderBulkButton()}
-  function renderStats(){const c=app.data.counts;$('#stats').innerHTML=[['mails','封邮件',''],['details','条业务明细',''],['review','待人工复核','amber'],['confirmed','已确认交接','green'],['filtered','过滤参考','red']].map(x=>`<div class="stat ${x[2]}"><div class="num">${c[x[0]]??0}</div><div class="label">${x[1]}</div></div>`).join('');$('#filtered-nav-count').textContent=filteredMails().length||''}
+  function renderStats(){const c=app.data.counts;$('#stats').innerHTML=[['mails','封邮件',''],['details','条业务明细',''],['review','待人工复核','amber'],['confirmed','已确认交接','green'],['filtered','过滤参考','red']].map(x=>`<div class="stat ${x[2]}"><div class="num">${c[x[0]]??0}</div><div class="label">${x[1]}</div></div>`).join('')}
   function searchNorm(value){return String(value??'').normalize('NFKC').toLowerCase().replace(/[\s\-_/.,，。:：;；|+()（）【】\[\]{}]+/g,'')}
   function searchTokens(value){return String(value??'').normalize('NFKC').toLowerCase().split(/[\s\-_/.,，。:：;；|+()（）【】\[\]{}]+/).map(searchNorm).filter(Boolean)}
   function fuzzyContains(value,query){const text=searchNorm(value),needle=searchNorm(query);if(!needle)return true;if(text.includes(needle))return true;if(needle.length<2)return false;let cursor=0,matched=0;for(const char of needle){const found=text.indexOf(char,cursor);if(found<0)continue;matched++;cursor=found+1}return matched/needle.length>=0.75}
@@ -554,7 +568,8 @@
   function currentFiltered(){return filteredMails().find(m=>m.id===app.mailId)}
   function currentDetail(){const m=currentMail();return m?.details.find(d=>d.id===app.detailId)||m?.details[0]}
   function renderFilteredDetail(){const m=currentFiltered();if(!m){$('#detail').innerHTML='<div class="empty">请从左侧选择一封已过滤邮件</div>';return}const attachments=(m.attachments||'').split(/[；;]+/).filter(Boolean).map(a=>attachmentChip(m,a)).join('')||'<span class="muted">无附件</span>';$('#detail').innerHTML=`<div class="detail-head"><span class="pill review">已过滤</span><div class="detail-title">${esc(m.subject||'无主题')}</div><div class="detail-meta"><span>发件人：${esc(m.sender||'未知')}</span><span>时间：${esc(m.date||'')}</span><span>来源：阶段一过滤日志</span></div><div class="evidence-sub" style="margin-top:10px">这封邮件已被阶段一规则或意图识别判定为非询单，单独保留用于人工追溯；不会自动进入工单查询。</div></div><div class="steps"><div class="step done">邮件归档</div><div class="step done">附件盘点</div><div class="step done">规则过滤</div><div class="step active">人工查看</div><div class="step">待工单比对</div></div><div class="tabs"><button class="active">邮件原文</button></div><div class="detail-body"><h3 class="section-title">邮件正文摘要</h3><div class="raw">${esc(m.body||'（过滤日志未保存正文摘要）')}</div><h3 class="section-title" style="margin-top:18px">附件清单</h3><div>${attachments}</div></div>`}
-  function attachmentAuditText(a){if(!a?.expected&&!a?.output&&!a?.status)return '';return `附件表格：${esc(a.expected||'—')} 条 / 输出 ${esc(a.output||'—')} 条 · ${esc(a.status||'未校验')}`}
+  // 附件数量校验继续保存在数据和证据面板，仅不在业务卡片重复显示小字摘要。
+  function attachmentAuditText(a){return ''}
   function renderDetail(){if(app.view==='filtered'){renderFilteredDetail();return}const m=currentMail(),d=currentDetail();if(!m||!d){$('#detail').innerHTML='<div class="empty">请从左侧选择一封询单</div>';$('#evidence').innerHTML='<div class="empty">等待选择业务明细</div>';return}const steps=d.status==='confirmed'?['done','done','done','done','done']:['done','done','done',d.status==='review'?'active':'done',''];const audit=attachmentAuditText(d.attachment_audit);let body='';if(app.tab==='raw')body=`<h3 class="section-title">邮件正文摘要</h3><div class="raw">${esc(m.body||'（正文摘要为空）')}</div><h3 class="section-title" style="margin-top:18px">附件清单</h3><div>${(m.attachments||'').split(/[；;]+/).filter(Boolean).map(a=>`<span class="attachment">${esc(a)}</span>`).join('')||'<span class="muted">无附件</span>'}</div>`;else if(app.tab==='events')body=`<h3 class="section-title">操作记录</h3>${d.events?.length?d.events.slice().reverse().map(e=>`<div class="event"><b>${esc(e.label)}</b> · ${esc(e.at)}${e.reason?`<br>原因：${esc(e.reason)}`:''}</div>`).join(''):'<div class="empty">当前明细还没有人工操作记录</div>'}`;else body=`<div class="section-title">业务明细 <span class="muted">· 选择一条查看左侧证据</span></div><div class="detail-grid">${m.details.map(x=>{const a=attachmentAuditText(x.attachment_audit);return `<div class="business ${x.id===app.detailId?'selected':''}" data-detail="${esc(x.id)}"><div class="row"><span class="key">代理</span><span class="value">${esc(x.fields.agent||'待人工确认')}</span></div><div class="row"><span class="key">公司</span><span class="value">${esc(x.fields.company||'待确认')}</span></div><div class="row"><span class="key">国家</span><span class="value">${esc(x.fields.country||'待确认')}</span></div><div class="row"><span class="key">项目</span><span class="value">${esc(x.fields.program||'待确认')}</span></div>${a?`<div class="row"><span class="key">附件表</span><span class="value">${a}</span></div>`:''}<div class="card-foot"><span class="pill ${statusClass(x.status)}">${statusLabel(x.status)}</span><span class="muted">${esc(x.confidence)}</span></div></div>`}).join('')}</div>`;$('#detail').innerHTML=`<div class="detail-head"><span class="pill ${statusClass(m.status)}">${statusLabel(m.status)}</span><div class="detail-title">${esc(m.subject||'无主题')}</div><div class="detail-meta"><span>发件人：${esc(m.sender||'未知')}</span><span>时间：${esc(m.date||'')}</span><span>来源：${esc(d.source)}</span></div>${audit?`<div class="evidence-sub" style="margin-top:8px"><b>${audit}</b></div>`:''}${d.review_hint?`<div class="evidence-sub" style="margin-top:8px">人工提示：${esc(d.review_hint)}</div>`:''}<div class="detail-actions"><button class="btn small primary" id="edit" title="修正当前明细">修正明细</button><button class="btn small" id="agent" title="${d.fields.agent?'确认代理归属':'补全代理'}">${d.fields.agent?'确认代理':'补全代理'}</button><button class="btn small" id="confirm" title="确认整理完成">整理完成</button><button class="btn small" id="return" title="退回复核">退回复核</button><button class="btn small" id="add-project" title="新增项目">＋新增</button><button class="btn small danger" id="del-project" title="删除该项目">删除项目</button></div></div><div class="agent-row"><div><span class="muted">代理归属：</span><strong>${esc(d.fields.agent||'待人工确认')}</strong></div><span class="agent-state">${esc(d.agent_match||'待确认')}</span></div><div class="steps">${['邮件归档','附件盘点','记录展开','人工复核','待工单比对'].map((x,i)=>`<div class="step ${steps[i]}">${x}</div>`).join('')}</div><div class="tabs"><button class="${app.tab==='details'?'active':''}" data-tab="details">业务明细</button><button class="${app.tab==='raw'?'active':''}" data-tab="raw">邮件原文</button><button class="${app.tab==='events'?'active':''}" data-tab="events">操作记录</button></div><div class="detail-body">${body}</div>`;document.querySelectorAll('[data-detail]').forEach(n=>n.onclick=()=>{app.detailId=n.dataset.detail;render()});document.querySelectorAll('[data-tab]').forEach(n=>n.onclick=()=>{app.tab=n.dataset.tab;render()});$('#edit').onclick=()=>openModal(d);$('#agent').onclick=()=>openModal(d,'agent');$('#confirm').onclick=()=>doAction('confirm',{},'人工确认：字段已核对');$('#return').onclick=()=>doAction('return',{},'退回复核：需要人工进一步确认');$('#add-project').onclick=()=>openModal(d,'add');$('#del-project').onclick=()=>deleteProject()}
   function renderEvidence(){if(app.view==='filtered'){const m=currentFiltered();if(!m){$('#evidence').innerHTML='<div class="empty">选择过滤邮件后显示过滤证据</div>';return}$('#evidence').innerHTML=`<h3>过滤判定证据</h3><div class="evidence-sub">这里展示阶段一为什么没有把该邮件放进询单队列。所有过滤日志都保留，不会因为过滤而丢失。</div><div class="ev-card"><div class="ev-label">过滤原因</div><div class="ev-line"><b>${esc(m.reason||'未记录')}</b></div><span class="source">来源：规则过滤日志</span></div><div class="ev-card"><div class="ev-label">意图识别状态</div><div class="ev-line">${esc(m.intent_status||'未调用或未记录')}</div><div class="ev-line"><span>处理时间：</span>${esc(m.processed_at||'未记录')}</div></div><div class="ev-card"><div class="ev-label">队列归属</div><div class="ev-line">${m.settled?'已定论过滤：默认不进入工单查询':'过滤候选：建议人工确认是否误过滤'}</div></div>`;return}const d=currentDetail();if(!d){$('#evidence').innerHTML='<div class="empty">选择明细后显示证据</div>';return}const s=d.semantic||{};const semanticHtml=s.status?`<div class="ev-card"><div class="ev-label">LLM语义校验 <span class="pill ${s.status==='valid'?'confirmed':'review'}">${esc(s.status)}</span></div><div class="ev-line"><span>问题字段：</span>${esc(s.issues||'无')}</div><div class="ev-line"><span>建议：</span>${esc(s.suggestion||'保留程序原值')}</div><div class="ev-line"><span>理由：</span>${esc(s.reason||'')}</div><span class="source">模型：${esc(s.model||'未记录')}</span></div>`:'';$('#evidence').innerHTML=`<h3>字段证据</h3><div class="evidence-sub">以下内容来自阶段一原始输出。人工接受值会单独保存，并不会覆盖原始邮件或全局规则。</div>${semanticHtml}${d.evidence.map(e=>`<div class="ev-card"><div class="ev-label">${esc(e.label)}</div><div class="ev-line"><span>初始提取：</span>${esc(e.initial||'（空）')}</div><div class="ev-line"><span>当前接受：</span><b>${esc(e.accepted||'（待确认）')}</b></div><span class="source">来源：${esc(e.source)}</span></div>`).join('')}<div class="events"><div class="section-title">最近操作</div>${d.events?.length?d.events.slice(-4).reverse().map(e=>`<div class="event"><b>${esc(e.label)}</b><br>${esc(e.at)}</div>`).join(''):'<div class="muted" style="font-size:12px">暂无人工操作</div>'}</div>`}
   const _renderEvidenceBase=renderEvidence;renderEvidence=function(){_renderEvidenceBase();if(app.view==='filtered')return;const d=currentDetail(),s=d?.semantic||{};if(!s.status)return;const card=document.querySelector('#evidence .ev-card');if(!card)return;const extra=[s.issue_codes?`<div class="ev-line"><span>问题编号：</span>${esc(s.issue_codes)}</div>`:'',s.evidence?`<div class="ev-line"><span>证据：</span>${esc(s.evidence)}</div>`:'',s.current_values?`<div class="ev-line"><span>当前值：</span>${esc(s.current_values)}</div>`:'',s.suggested_values?`<div class="ev-line"><span>建议值：</span>${esc(s.suggested_values)}</div>`:''].join('');if(extra)card.insertAdjacentHTML('beforeend',extra)}
@@ -756,8 +771,6 @@
     const active=(app.data?.mails||[]).filter(dateMatches),details=active.flatMap(m=>m.details||[]),filtered=(app.data?.filtered_mails||[]).filter(dateMatches),missing=(app.data?.missing_mails||[]).filter(dateMatches);
     const c={imap:app.data?.counts?.imap_read_total||0,mails:active.length,total:active.length+filtered.length,details:details.length,review:details.filter(d=>d.status==='review').length,confirmed:details.filter(detailStage2Ready).length,filtered:filtered.length};
     $('#stats').innerHTML=[['imap','IMAP读取邮件',''],['total','邮件总数',''],['mails','询单邮件',''],['details','业务明细',''],['review','待人工复核','amber'],['confirmed','已完成明细','green'],['filtered','已过滤邮件','red']].map(x=>`<div class="stat ${x[2]}"><div class="num">${x[0]==='imap'?(c.imap||'—'):(c[x[0]]??0)}</div><div class="label">${x[1]}</div></div>`).join('');
-    const filteredCount=$('#filtered-nav-count');if(filteredCount)filteredCount.textContent=filtered.length||'';
-    const missingCount=$('#missing-nav-count');if(missingCount)missingCount.textContent=missing.length||'';
     setHistoryState();
   };
   renderQueue=function(){
@@ -1365,9 +1378,6 @@
     const values=[['imap','IMAP读取邮件',''],['total','邮件总数',''],['mails','德国专项邮件',''],['details','业务明细',''],['items','WEEE品牌/品类',''],['pending','待确认业务','amber'],['checked','已确认业务','green']];
     const counts={imap:app.data?.counts?.imap_read_total||0,total:allActive.length+allFiltered.length,mails:mails.length,details:details.length,items:items.length,pending,checked};
     $('#stats').innerHTML=values.map(item=>`<div class="stat ${item[2]}"><div class="num">${item[0]==='imap'?(counts.imap||'—'):counts[item[0]]}</div><div class="label">${item[1]}</div></div>`).join('');
-    const nav=$('#weee-nav-count');if(nav)nav.textContent=mails.length||'';
-    const filteredCount=$('#filtered-nav-count');if(filteredCount)filteredCount.textContent=(app.data?.filtered_mails||[]).filter(dateMatches).length||'';
-    const missingCount=$('#missing-nav-count');if(missingCount)missingCount.textContent=(app.data?.missing_mails||[]).filter(dateMatches).length||'';
     setHistoryState();
   };
   function weeeClassOptions(selected){
@@ -1390,8 +1400,8 @@
       return {...original,
         item_id:original.item_id||node.dataset.weeeItemId||String(index),
         brand:node.querySelector('[data-weee-brand]')?.value.trim()||'',
-        category:node.querySelector('[data-weee-category]')?.value.trim()||'',
-        category_original:node.querySelector('[data-weee-category]')?.value.trim()||'',
+        category:original.category||original.category_original||'',
+        category_original:original.category_original||original.category||'',
         category_class:classId,
         category_class_name:WEEE_CLASS_NAMES[classId]||'',
         category_class_status:classId?'matched':(original.category_class_status||'unmatched')};
@@ -1443,13 +1453,13 @@
   // WEEE 字段采用事件代理，避免每次 render 重建卡片后失去监听；输入或选择类别
   // 会立即写回内存，并在短暂防抖后写入工作台状态，切换到其他卡片不会丢失。
   document.addEventListener('input',event=>{
-    if(event.target?.matches?.('[data-weee-brand],[data-weee-category]'))updateWeeeDraftFromField(event.target,360);
+    if(event.target?.matches?.('[data-weee-brand]'))updateWeeeDraftFromField(event.target,360);
   });
   document.addEventListener('change',event=>{
-    if(event.target?.matches?.('[data-weee-brand],[data-weee-category],[data-weee-class]'))updateWeeeDraftFromField(event.target,80);
+    if(event.target?.matches?.('[data-weee-brand],[data-weee-class]'))updateWeeeDraftFromField(event.target,80);
   });
   document.addEventListener('blur',event=>{
-    if(event.target?.matches?.('[data-weee-brand],[data-weee-category],[data-weee-class]'))updateWeeeDraftFromField(event.target,0);
+    if(event.target?.matches?.('[data-weee-brand],[data-weee-class]'))updateWeeeDraftFromField(event.target,0);
   },true);
   async function confirmWeeeDetail(mail,detail){
     cancelWeeeDraftSave(detail?.id);
@@ -1459,7 +1469,7 @@
     const navigation=captureNavigation(),finishFeedback=beginActionFeedback(takeActionButton());
     try{
       const result=await api('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'confirm_weee',record_id:detail.id,mail_id:mail.id,mail_number:mail.mail_number,detail_number:detail.detail_number,subject:mail.subject,weee_items:items,reason:reason.trim()||'人工核对邮件、附件及产品分类表后确认'})});
-      const savedItems=items.map(item=>({...item,weee_confirmed:!!(item.brand&&item.category&&item.category_class)}));
+      const savedItems=items.map(item=>({...item,weee_confirmed:!!(item.brand&&item.category_class)}));
       detail.weee={...(detail.weee||{}),items:savedItems,status:result.weee_status||'pending',confirmed:result.weee_status==='confirmed'};
       detail.events=[...(detail.events||[]),{at:new Date().toISOString(),action:'confirm_weee',label:result.message||'确认德国 WEEE 品牌与品类',reason}];
       syncLocalCounts();restoreNavigationSelection(navigation);render();restoreNavigationScroll(navigation);toast(result.message||'德国 WEEE 品牌与品类已保存');
@@ -1546,7 +1556,7 @@
   }
   function renderBatteryCard(detail,selectedId){
     const items=batteryItemsFor(detail),confirmed=detailStage2Ready(detail),add=`<button class="btn small" data-add-battery-item="${esc(detail.id)}">＋新增品牌/品类</button>`;
-    const rows=items.map((item,index)=>`<div class="weee-item-form" data-battery-item="${esc(item.item_id)}"><div><label>品牌</label><input data-battery-field="brand" value="${esc(item.brand||'')}" placeholder="品牌"/></div><div><label>邮件/附件原始品类</label><input data-battery-field="category" value="${esc(item.category||'')}" placeholder="原始品类"/></div><div><label>德国分类</label><select data-battery-field="category_class">${batteryClassOptions(item.category_class||'')}</select></div><div class="weee-item-actions"><button class="btn small primary" data-confirm-battery-item="${index}">${item.battery_confirmed?'重新保存此项':'确认此项'}</button><button class="btn small danger" data-delete-battery-item="${index}">删除此项</button>${index===items.length-1?add:''}<span class="pill ${item.battery_confirmed?'confirmed':'review'}">${item.battery_confirmed?'已确认':'待确认'}</span></div></div>`).join('');
+    const rows=items.map((item,index)=>`<div class="weee-item-form" data-battery-item="${esc(item.item_id)}"><div><label>品牌</label><input data-battery-field="brand" value="${esc(item.brand||'')}" placeholder="品牌"/></div><div><label>德国分类</label><select data-battery-field="category_class">${batteryClassOptions(item.category_class||'')}</select></div><div class="weee-item-actions"><button class="btn small primary" data-confirm-battery-item="${index}">${item.battery_confirmed?'重新保存此项':'确认此项'}</button><button class="btn small danger" data-delete-battery-item="${index}">删除此项</button>${index===items.length-1?add:''}<span class="pill ${item.battery_confirmed?'confirmed':'review'}">${item.battery_confirmed?'已确认':'待确认'}</span></div></div>`).join('');
     return `<div class="weee-detail-card battery-detail-card ${selectedId===detail.id?'selected':''}" data-battery-detail="${esc(detail.id)}"><div class="weee-detail-head"><b>${esc(detail.fields?.company||'公司待确认')}</b><span class="pill ${confirmed?'confirmed':'review'}">${confirmed?'已确认':'待人工确认'}</span></div><div class="weee-mail-meta"><span>代理：${esc(detail.fields?.agent||'待确认')}</span><span>项目：德国电池法</span></div>${rows||'<div class="weee-item-actions">'+add+'</div>'}</div>`;
   }
   function collectBatteryItems(detail){
@@ -1579,7 +1589,7 @@
         event.stopPropagation();const deleting=button.hasAttribute('data-delete-battery-item'),index=Number(button.dataset.deleteBatteryItem??button.dataset.confirmBatteryItem),items=collectBatteryItems(detail),target=items[index];if(!target)return;
         if(deleting&&!confirm('仅删除当前电池品牌/品类项？'))return;
         cancelBatteryDraft(detail.id);const navigation=captureNavigation(),finish=beginActionFeedback(button);
-        try{const result=await queueBatteryWrite(mail,detail,deleting?'delete_battery_item':'confirm_battery_item',items,target.item_id);detail.battery=result.battery;detail.status=result.battery.confirmed?'confirmed':'ready';syncLocalCounts();restoreNavigationSelection(navigation);render();restoreNavigationScroll(navigation);toast(result.battery.confirmed?'电池品牌/品类已确认':deleting?'电池品类项已删除':'已保存，请补齐品牌、原始品类和德国分类');scheduleBackgroundRefresh()}catch(error){toast(error.message)}finally{finish()}
+        try{const result=await queueBatteryWrite(mail,detail,deleting?'delete_battery_item':'confirm_battery_item',items,target.item_id);detail.battery=result.battery;detail.status=result.battery.confirmed?'confirmed':'ready';syncLocalCounts();restoreNavigationSelection(navigation);render();restoreNavigationScroll(navigation);toast(result.battery.confirmed?'电池品牌/品类已确认':deleting?'电池品类项已删除':'已保存，请补齐品牌和德国分类');scheduleBackgroundRefresh()}catch(error){toast(error.message)}finally{finish()}
       });
     });
   }
@@ -1596,7 +1606,7 @@
       }
       const w=detail.weee,items=Array.isArray(w.items)?w.items:[];
       const add=`<button class="btn small" data-add-weee-item="${esc(detail.id)}">＋新增品牌/品类</button>`;
-      const itemsHtml=items.length?items.map((item,index)=>`<div class="weee-item-form" data-weee-item="${index}" data-weee-item-id="${esc(item.item_id||index)}"><div><label>品牌</label><input data-weee-brand value="${esc(item.brand||'')}" placeholder="品牌"/></div><div><label>邮件/附件原始品类</label><input data-weee-category value="${esc(item.category||item.category_original||'')}" placeholder="原始品类"/></div><div><label>德国分类</label><select data-weee-class>${weeeClassOptions(item.category_class)}</select></div><div class="weee-item-actions"><button class="btn small primary" data-confirm-weee-item="${esc(detail.id)}" data-weee-item-index="${index}">${item.weee_confirmed?'重新保存此项':'确认此项'}</button><button class="btn small danger" data-delete-weee-item="${esc(detail.id)}" data-weee-item-index="${index}">删除此项</button>${index===items.length-1?add:''}<span class="pill ${item.weee_confirmed?'confirmed':'review'}">${esc(weeeItemStatus(item))}</span></div></div>`).join(''):`<div class="empty compact-empty">未提取到品牌/品类</div><div class="weee-item-actions">${add}</div>`;
+      const itemsHtml=items.length?items.map((item,index)=>`<div class="weee-item-form" data-weee-item="${index}" data-weee-item-id="${esc(item.item_id||index)}"><div><label>品牌</label><input data-weee-brand value="${esc(item.brand||'')}" placeholder="品牌"/></div><div><label>德国分类</label><select data-weee-class>${weeeClassOptions(item.category_class)}</select></div><div class="weee-item-actions"><button class="btn small primary" data-confirm-weee-item="${esc(detail.id)}" data-weee-item-index="${index}">${item.weee_confirmed?'重新保存此项':'确认此项'}</button><button class="btn small danger" data-delete-weee-item="${esc(detail.id)}" data-weee-item-index="${index}">删除此项</button>${index===items.length-1?add:''}<span class="pill ${item.weee_confirmed?'confirmed':'review'}">${esc(weeeItemStatus(item))}</span></div></div>`).join(''):`<div class="empty compact-empty">未提取到品牌/品类</div><div class="weee-item-actions">${add}</div>`;
       return `<div class="weee-detail-card ${selected.id===detail.id?'selected':''}" data-weee-detail="${esc(detail.id)}"><div class="weee-detail-head"><b>${esc(detail.fields?.company||'公司待确认')}</b><span class="pill ${w.confirmed?'confirmed':'review'}">${esc(weeeStatusLabel(detail))}</span></div><div class="weee-mail-meta"><span>代理：${esc(detail.fields?.agent||'待确认')}</span><span>项目：${esc(detail.fields?.program||'德国WEEE')}</span></div>${itemsHtml}</div>`;
     });
     const groupOf=detail=>isBatteryDetail(detail)?'battery':(detail.weee?.enabled||/^德国\s*WEEE$/i.test(detail.fields?.program||''))?'weee':'other';
@@ -1700,10 +1710,11 @@
       if(card.matches('.weee-detail-card')){
         const edit=document.createElement('button');edit.className='btn small';edit.textContent='修正明细';edit.dataset.businessAction='edit';
         edit.onclick=event=>{event.stopPropagation();app.detailId=detail.id;openModal(detail)};
-        card.querySelector('.weee-detail-head').appendChild(edit);
+        const remove=document.createElement('button');remove.className='btn small danger';remove.textContent='删除该业务';remove.title='只删除当前公司与项目，不删除同封邮件的其他业务';remove.dataset.businessAction='delete-business';
+        remove.onclick=event=>{event.stopPropagation();app.detailId=detail.id;deleteProjectRecord(mail,detail)};
+        card.querySelector('.weee-detail-head').append(edit,remove);
       }else{
         bindBusinessActions(card,mail,detail);
-        if(app.view==='weee')card.querySelector('[data-business-action="delete"]')?.remove();
       }
     });
   };
@@ -1730,7 +1741,6 @@
         ['待复核邮件',pending.filter(mail=>mail.status==='review').length],['待确认邮件',pending.filter(mail=>mail.status==='ready').length],['已过滤邮件',filtered.length]];
       $('#stats').innerHTML=stats.map(([label,count])=>`<div class="stat"><div class="num">${count}</div><div class="label">${label}</div></div>`).join('');
     }
-    const nav=$('#weee-nav-count');if(nav)nav.textContent=(app.data?.mails||[]).filter(mail=>dateMatches(mail)&&isGermanSpecialMail(mail)).length||'';
   };
 
 // Source-only evidence workspace. UI choices never alter extracted business fields.
@@ -2000,7 +2010,15 @@
   render=function(){renderBeforeCalendar();refreshCalendarStatus()};
   window.addEventListener('online',()=>load());
   startHealthMonitor();
-  fetch('/api/run/state',{cache:'no-store'}).then(response=>{if(response.ok){const link=document.getElementById('run-console-link');link.hidden=false;link.style.display='block'}}).catch(()=>{});
+  const runConsoleButton=$('#run-console-link'),runConsolePage=$('#run-console-page'),mainPage=$('.main');
+  function showRunConsole(open){
+    mainPage.classList.toggle('console-open',open);runConsolePage.hidden=!open;
+    runConsoleButton.classList.toggle('active',open);runConsoleButton.setAttribute('aria-pressed',String(open));
+    if(open)document.querySelectorAll('.nav [data-view]').forEach(button=>button.classList.remove('active'));
+  }
+  runConsoleButton.onclick=()=>showRunConsole(true);
+  document.querySelectorAll('.nav [data-view]').forEach(button=>button.addEventListener('click',()=>showRunConsole(false)));
+  fetch('/api/run/state',{cache:'no-store'}).then(response=>{if(response.ok)runConsoleButton.hidden=false}).catch(()=>{});
   load();
 </script>
 </body>

@@ -73,6 +73,7 @@ CONFIG_PATH = APP_ROOT / "config.yaml"
 SETTLED_FILTER_HINTS = (
     "证书/下号通知",
     "非注册业务",
+    "明确非目标项目",
     "LLM确认",
     "ECOPV内部发件人邮箱",
     "ECOPV系统内部收件人邮箱",
@@ -3467,7 +3468,8 @@ class WorkbenchStore:
                         item["category_class_status"] = _text(item.get("category_class_status")) or "unmatched"
                     previous = previous_items.get(item["item_id"]) or {}
                     was_confirmed = bool(item.get("weee_confirmed") or previous.get("weee_confirmed"))
-                    complete = bool(item["brand"] and item["category"] and category_class)
+                    # 原始品类仍保留在 evidence payload，但不是人工确认字段。
+                    complete = bool(item["brand"] and category_class)
                     if action == "confirm_weee":
                         item["weee_confirmed"] = complete
                     elif item["item_id"] == target_item_id:

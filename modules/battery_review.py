@@ -233,7 +233,9 @@ def normalize_battery_items(raw_items, previous_items=(), confirm_id="", delete_
             raise ValueError("电池品牌/品类项目编号重复")
         seen.add(item_id)
         old = previous.get(item_id, {})
-        complete = all(item.values())
+        # category is retained as original mail/attachment evidence, not a target
+        # field that the reviewer must manually edit. Confirmation is brand + class.
+        complete = bool(item["brand"] and item["category_class"])
         # Only an explicit confirmation or unchanged saved confirmation is trusted.
         item["battery_confirmed"] = bool(complete and (item_id == confirm_id or (
             old.get("battery_confirmed") and all(old.get(key) == item[key] for key in keys))))

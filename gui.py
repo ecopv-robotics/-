@@ -999,10 +999,12 @@ class WorkerThread(QThread):
                             new_row = row.copy()
                             new_row["项目"] = sr["standard_name"]
                             new_row["项目原始值"] = proj_raw
+                            new_row["项目规范化状态"] = "已匹配" if sr.get("matched") else "未匹配"
                             expanded.append(new_row)
                         continue
                     if len(split_results) == 1 and split_results[0]["standard_name"]:
                         row["项目"] = split_results[0]["standard_name"]
+                        row["项目规范化状态"] = "已匹配" if split_results[0].get("matched") else "未匹配"
                 expanded.append(row)
 
             # M4.1: 「国家+EPR」统称去重。代理商口语常拿 "奥地利EPR" 代指该国三项，
@@ -1028,6 +1030,41 @@ class WorkerThread(QThread):
             normalized_rows.extend(kept)
             mail_keys.extend([block_id] * len(kept))
 
+        # 目标范围在项目拆分后逐行判断：一封邮件同时含目标项目和德国一次性
+        # 塑料税时，只过滤非目标项目，不整封邮件误删；过滤原因进入过滤日志。
+        from modules.mail_filter import is_german_single_use_non_target
+        kept_rows, kept_keys, excluded_projects = [], [], set()
+        for index, row in enumerate(normalized_rows):
+            project = str(row.get("项目", "") or "").strip()
+            if is_german_single_use_non_target(project, str(row.get("国家", "") or "")):
+                mail_key = mail_keys[index] if index < len(mail_keys) else index
+                signature = (str(mail_key), project.casefold())
+                if signature not in excluded_projects:
+                    excluded_projects.add(signature)
+                    attachments = [
+                        {"filename": name.strip()}
+                        for name in str(row.get("附件名称", "") or "").split("；")
+                        if name.strip()
+                    ]
+                    filtered_mails.append({
+                        "sender_email": row.get("sender_email", ""),
+                        "recipient": row.get("recipient", ""),
+                        "date": row.get("date"),
+                        "subject": row.get("subject", ""),
+                        "body_text": row.get("body_original") or row.get("body_text", ""),
+                        "attachments": attachments,
+                        "filter_reason": f"明确非目标项目：{project or '德国一次性塑料税'}",
+                        "intent_llm_status": "明确非目标项目",
+                        "filter_status": "filtered",
+                        "hard_filter": True,
+                    })
+                continue
+            kept_rows.append(row)
+            if index < len(mail_keys):
+                kept_keys.append(mail_keys[index])
+        normalized_rows, mail_keys = kept_rows, kept_keys
+        if excluded_projects:
+            logger.info(f"项目范围过滤: 德国一次性塑料税 {len(excluded_projects)} 项；同封其它目标项目保留")
         logger.info(f"项目标准化完成: {len(normalized_rows)} 行")
         # M4.2: 确定性业务校验先拦截“一家公司”、说明句、文件名、空项目等
         # 明显异常。它只打标，不改写模型/规则提取值。
@@ -1065,6 +1102,14 @@ class WorkerThread(QThread):
                 )
                 for row_index, reviewed in zip(review_indices, reviewed_rows):
                     normalized_rows[row_index] = reviewed
+
+            # LLM 可能选择候选公司或改写字段；重新执行确定性闸门，确保代理被
+            # 抽成客户、项目仍无法匹配等风险不会因模型返回 valid 而被晋级。
+            post_review_guarded = sum(
+                bool(apply_row_guard(row)) for row in normalized_rows
+            )
+            if post_review_guarded:
+                logger.warning(f"语义复检后确定性校验仍标记 {post_review_guarded} 行需人工复核")
 
             # 语义 Agent 已确认“意图低置信”但字段完整且业务规则通过的记录，
             # 不再因为过滤器的保守标记继续进入人工复核。确定性业务风险、
