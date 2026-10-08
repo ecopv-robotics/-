@@ -16,6 +16,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="本机邮件审核网页控制台")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--open-review", action="store_true", help="启动后直接打开人工复核页")
     args = parser.parse_args(argv)
     app = QCoreApplication(sys.argv[:1])
     storage = APP_ROOT / "storage"
@@ -33,7 +34,7 @@ def main(argv=None):
                 with urlopen(url + "/api/run/state", timeout=2) as response:
                     if json.load(response).get("ok"):
                         if not args.no_browser:
-                            webbrowser.open(url + "/run")
+                            webbrowser.open(url + ("/" if args.open_review else "/run"))
                         return 0
             except (OSError, ValueError):
                 pass
@@ -48,7 +49,7 @@ def main(argv=None):
         atomic_text(info_path, json.dumps({"port": server.httpd.server_address[1], "build": controller.snapshot()["build"]}))
         print("网页运行控制台：" + url + "run", flush=True)
         if not args.no_browser:
-            webbrowser.open(url + "run")
+            webbrowser.open(url if args.open_review else url + "run")
         timer = QTimer()
         def finish_shutdown():
             if not controller.closing or controller.busy:
