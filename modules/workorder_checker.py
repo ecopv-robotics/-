@@ -24,7 +24,7 @@ import re
 import time
 from datetime import date as date_type, datetime, timedelta
 from typing import Callable, List, Dict, Optional, Tuple
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from utils.fuzzy_match import fuzzy_match_pair, normalize_text, to_simplified
 from modules.weee_category_audit import compare_weee_categories
@@ -576,6 +576,9 @@ class WorkOrderChecker:
         self._last_fuzzy_term = ""
         self._last_date_window = None
         self._last_date_filter_status = ""
+        self._expected_query_date_window = None
+        self._last_query_response_status = None
+        self._last_query_response_note = ""
         self.last_processed_rows: List[Dict] = []
         # 加载缓存
         self._query_cache: Dict[str, dict] = self._load_cache()
@@ -1552,8 +1555,53 @@ class WorkOrderChecker:
             return value.strftime("%Y-%m-%d")
         return str(value or "")[:10]
 
+    async def _select_calendar_day(self, date_text: str) -> bool:
+        """通过工单页实际日期弹层选择日期，不直接改只读输入框的显示值。"""
+        popup = self._page.locator(".ant-picker-dropdown:visible")
+        target = self._parse_date_value(date_text)
+        if target is None:
+            return False
+        target_month = target.year * 12 + target.month - 1
+
+        for _ in range(36):
+            if not await popup.count():
+                return False
+            cells = popup.locator(f'td[title="{date_text}"]')
+            for index in range(await cells.count()):
+                cell = cells.nth(index)
+                if await cell.is_visible():
+                    await cell.click(timeout=self.field_timeout_ms)
+                    return True
+
+            panels = popup.locator(".ant-picker-panel")
+            if not await panels.count():
+                return False
+            headers = await popup.locator(".ant-picker-header-view").all_text_contents()
+            shown_months = []
+            for header in headers:
+                match = re.search(r"(\d{4})\s*年\s*(\d{1,2})\s*月", str(header))
+                if match:
+                    shown_months.append(
+                        int(match.group(1)) * 12 + int(match.group(2)) - 1
+                    )
+            if not shown_months:
+                return False
+
+            if target_month < min(shown_months):
+                button = panels.first.locator(".ant-picker-header-prev-btn")
+            elif target_month > max(shown_months):
+                button = panels.last.locator(".ant-picker-header-next-btn")
+            else:
+                # 日期所在月份已显示但精确单元格不存在，控件结构或可选范围异常。
+                return False
+            if not await button.count() or not await button.is_enabled():
+                return False
+            await button.click(timeout=self.field_timeout_ms)
+            await asyncio.sleep(0.05)
+        return False
+
     async def _fill_date_input(self, field_name: str, value, selector_key: str) -> bool:
-        """填写并读回验证页面日期输入框；无法确认则不提交查询。"""
+        """通过日期控件选择并读回日期；只读输入框不可用文本填充冒充已提交。"""
         date_text = self._format_date_input(value)
         if not date_text:
             return False
@@ -1573,23 +1621,50 @@ class WorkOrderChecker:
                     )
                     if nested and await nested.is_visible():
                         target = nested
-                await target.click()
-                try:
-                    await target.fill(date_text, timeout=timeout_ms)
-                except Exception:
-                    await self._page.keyboard.press("Control+A")
-                    await self._page.keyboard.type(date_text, delay=30)
-                try:
-                    await target.press("Tab")
-                except Exception:
-                    pass
-                expected_date = self._parse_date_value(date_text)
-                try:
+
+                read_only = bool(
+                    await target.evaluate(
+                        "el => Boolean(el.readOnly || el.hasAttribute('readonly'))"
+                    )
+                )
+                if not read_only:
+                    try:
+                        await target.fill(date_text, timeout=timeout_ms)
+                        await target.press("Tab")
+                    except Exception:
+                        pass
                     actual_text = str(
                         await target.evaluate("el => String(el.value || '')") or ""
                     ).strip()
-                except Exception:
-                    actual_text = ""
+                    actual_date = self._parse_date_value(actual_text)
+                    expected_date = self._parse_date_value(date_text)
+                    if (
+                        expected_date is not None
+                        and actual_date is not None
+                        and actual_date.date() == expected_date.date()
+                    ):
+                        self._log(f"{field_name}已填写并读回确认: {actual_text}")
+                        return True
+
+                popup = self._page.locator(".ant-picker-dropdown:visible")
+                popup_open = bool(await popup.count())
+                if "开始" in field_name and popup_open:
+                    # 若上次操作遗留弹层，先关掉，避免把新开始日误作结束日。
+                    await self._page.keyboard.press("Escape")
+                    popup_open = False
+                if not popup_open:
+                    await target.click(timeout=timeout_ms)
+                if not await self._select_calendar_day(date_text):
+                    self._log(
+                        f"{field_name}无法在日历弹层中选择目标日期: {date_text}",
+                        "warning",
+                    )
+                    continue
+
+                actual_text = str(
+                    await target.evaluate("el => String(el.value || '')") or ""
+                ).strip()
+                expected_date = self._parse_date_value(date_text)
                 actual_date = self._parse_date_value(actual_text)
                 if (
                     expected_date is None
@@ -1597,13 +1672,14 @@ class WorkOrderChecker:
                     or actual_date.date() != expected_date.date()
                 ):
                     self._log(
-                        f"{field_name}读回值与目标日期不一致: 目标={date_text}, "
+                        f"{field_name}日历选择后读回值不一致: 目标={date_text}, "
                         f"实际={actual_text or '空'} (selector={sel})",
                         "warning",
                     )
                     continue
                 self._log(
-                    f"{field_name}已填入并读回确认: {actual_text} (selector={sel})"
+                    f"{field_name}已通过日历选择并读回确认: {actual_text}"
+                    f" (selector={sel})"
                 )
                 return True
             except Exception as exc:
@@ -1623,7 +1699,15 @@ class WorkOrderChecker:
             "下单结束日期", date_to, "order_date_to_input"
         )
         if from_ok and to_ok:
-            self._last_date_filter_status = "网页已设置邮件日期前后1个月"
+            self._expected_query_date_window = (
+                self._format_date_input(date_from),
+                self._format_date_input(date_to),
+            )
+            self._last_date_filter_status = (
+                "网页日期范围已通过日历选择并提交："
+                f"{self._expected_query_date_window[0]}~"
+                f"{self._expected_query_date_window[1]}"
+            )
         elif from_ok or to_ok:
             self._last_date_filter_status = "网页日期控件仅设置一端，查询条件不完整"
         else:
@@ -1710,18 +1794,44 @@ class WorkOrderChecker:
             try:
                 btn = await self._page.wait_for_selector(sel, timeout=3000)
                 if btn:
-                    await btn.click(timeout=self.field_timeout_ms)
+                    self._last_query_response_status = "unconfirmed"
+                    self._last_query_response_note = "点击后未捕获工单查询响应"
+                    response_task = asyncio.create_task(
+                        self._page.wait_for_response(
+                            lambda response: self._is_workorder_query_response(response),
+                            timeout=max(
+                                1500,
+                                min(5000, int(self.table_refresh_timeout_seconds * 1000)),
+                            ),
+                        )
+                    )
+                    try:
+                        await btn.click(timeout=self.field_timeout_ms)
+                    except Exception:
+                        response_task.cancel()
+                        raise
                     self._query_click_count += 1
                     self._log(f"点击查询按钮成功（实际点击累计 {self._query_click_count} 次）: {sel}")
+                    try:
+                        response = await response_task
+                        self._record_query_response(response)
+                    except Exception as exc:
+                        self._last_query_response_status = "unconfirmed"
+                        self._last_query_response_note = str(exc).splitlines()[0][:180]
+                        self._log(
+                            "查询按钮已点击，但未捕获工单查询接口响应；本条不读取旧表格",
+                            "warning",
+                        )
                     # 工单页是 SPA，常驻连接可能永远达不到 networkidle；
                     # 这里只把它当"能省则省"的加速窗口，超时（常态）不再刷
                     # warning，真正的就绪判据交给 _wait_for_table_refresh。
-                    try:
-                        await self._page.wait_for_load_state(
-                            "networkidle", timeout=min(self.timeout * 1000, 1500)
-                        )
-                    except Exception:
-                        pass
+                    if self._last_query_response_status != "ok":
+                        try:
+                            await self._page.wait_for_load_state(
+                                "networkidle", timeout=min(self.timeout * 1000, 1500)
+                            )
+                        except Exception:
+                            pass
                     # 固定 sleep(2) 已改为可配置的短沉降：指纹轮询会检测到
                     # 表格刷新后立刻返回，渲染快时不必陪着睡满 2 秒。
                     if self.query_click_settle_seconds:
@@ -1731,6 +1841,57 @@ class WorkOrderChecker:
                 continue
         self._log("未找到查询按钮", "error")
         return False
+
+    @staticmethod
+    def _is_workorder_query_response(response) -> bool:
+        """仅匹配注册工单列表查询接口，忽略通知、字典等后台请求。"""
+        try:
+            path = urlsplit(response.url).path.lower().rstrip("/")
+            return path.endswith(("/orderregister/querypagelist", "/orderregister/list"))
+        except Exception:
+            return False
+
+    def _record_query_response(self, response) -> None:
+        status_code = int(getattr(response, "status", 0) or 0)
+        response_path = urlsplit(str(getattr(response, "url", ""))).path
+        if not 200 <= status_code < 300:
+            self._last_query_response_status = "http_error"
+            self._last_query_response_note = f"{response_path} HTTP {status_code}"
+            self._log(f"工单查询接口返回异常状态: {self._last_query_response_note}", "warning")
+            return
+
+        expected = self._expected_query_date_window
+        if expected:
+            params = parse_qs(urlsplit(str(response.url)).query)
+            request = getattr(response, "request", None)
+            try:
+                post_data = request.post_data or ""
+                if post_data:
+                    params.update(parse_qs(post_data))
+            except Exception:
+                pass
+            actual = (
+                (params.get("orderDateBegin") or [""])[0],
+                (params.get("orderDateEnd") or [""])[0],
+            )
+            if actual != expected:
+                self._last_query_response_status = "date_mismatch"
+                self._last_query_response_note = (
+                    f"预期={expected[0]}~{expected[1]}，"
+                    f"实际请求={actual[0] or '未传开始日期'}~"
+                    f"{actual[1] or '未传结束日期'}"
+                )
+                self._log(
+                    f"工单查询请求日期参数未生效：{self._last_query_response_note}",
+                    "error",
+                )
+                return
+
+        self._last_query_response_status = "ok"
+        self._last_query_response_note = f"{response_path} HTTP {status_code}"
+        self._log(
+            f"工单查询响应已确认：HTTP {status_code}，日期参数与当前邮件窗口一致"
+        )
 
     async def _debug_screenshot(self, path: str) -> None:
         """过程截图（查询前/查询后）。
@@ -1784,8 +1945,19 @@ class WorkOrderChecker:
         """等到结果指纹变化并稳定，或确认加载状态结束且表格稳定。
 
         超时返回 False。相同表格内容且没有观察到加载状态时不能证明本次查询
-        更新过，因此调用方不得把旧表格当作本次查询结果。
+        更新过；但若已捕获本次 2xx 查询响应且请求日期与目标完全一致，
+        则允许相同结果在稳定后通过。
         """
+        if self._last_query_response_status in {
+            "date_mismatch", "http_error", "unconfirmed"
+        }:
+            self._log(
+                f"查询响应不能证明本次日期筛选已生效："
+                f"{self._last_query_response_note}",
+                "warning",
+            )
+            return False
+        response_confirmed = self._last_query_response_status == "ok"
         deadline = time.monotonic() + self.table_refresh_timeout_seconds
         last = None
         saw_loading = False
@@ -1797,6 +1969,12 @@ class WorkOrderChecker:
                 loading_finished_at = None
             current = await self._table_fingerprint()
             if current and current != before_fingerprint:
+                if current == last:
+                    return True
+                last = current
+            elif response_confirmed and current and not loading:
+                # 后端响应与日期窗口吻合；相同查询结果不会改变表格指纹，
+                # 因而以响应完成后的稳定表格作为刷新确认，避免误判旧数据。
                 if current == last:
                     return True
                 last = current

@@ -156,6 +156,48 @@ def test_refresh_wait_only_confirms_changed_stable_result():
     assert asyncio.run(checker._wait_for_table_refresh("same old result")) is False
 
 
+def test_successful_matching_query_response_confirms_identical_stable_table():
+    checker = make_checker()
+    checker.table_refresh_timeout_seconds = 0.4
+    checker._last_query_response_status = "ok"
+    checker._last_query_response_note = "HTTP 200; date window matched"
+    checker._table_loading_visible = lambda: asyncio.sleep(0, result=False)
+    checker._table_fingerprint = lambda: asyncio.sleep(0, result="same result")
+    assert asyncio.run(checker._wait_for_table_refresh("same result")) is True
+
+
+def test_date_mismatch_query_response_never_confirms_table_refresh():
+    checker = make_checker()
+    checker._last_query_response_status = "date_mismatch"
+    checker._last_query_response_note = "expected date window absent from request"
+    checker._table_loading_visible = lambda: asyncio.sleep(0, result=False)
+    checker._table_fingerprint = lambda: asyncio.sleep(0, result="new-looking result")
+    assert asyncio.run(checker._wait_for_table_refresh("old result")) is False
+
+
+def test_query_response_must_include_exact_expected_date_window():
+    checker = make_checker()
+    checker._expected_query_date_window = ("2026-07-26", "2026-09-26")
+
+    class FakeRequest:
+        post_data = None
+
+    class FakeResponse:
+        status = 200
+        request = FakeRequest()
+        url = (
+            "https://work.example/api/work/orderRegister/queryPageList"
+            "?orderDateBegin=2026-07-26&orderDateEnd=2026-09-26"
+        )
+
+    checker._record_query_response(FakeResponse())
+    assert checker._last_query_response_status == "ok"
+
+    FakeResponse.url = "https://work.example/api/work/orderRegister/queryPageList"
+    checker._record_query_response(FakeResponse())
+    assert checker._last_query_response_status == "date_mismatch"
+
+
 def test_query_form_refuses_to_submit_when_date_controls_are_incomplete():
     checker = make_checker()
 
@@ -182,43 +224,96 @@ def test_query_form_refuses_to_submit_when_date_controls_are_incomplete():
     assert "查询条件不完整" in checker._last_date_filter_status
 
 
-def test_date_input_must_read_back_the_requested_value():
+def test_read_only_date_inputs_are_set_by_calendar_selection_not_text_fill():
     class FakeDateInput:
-        def __init__(self, accepts_value):
+        def __init__(self, page):
             self.value = ""
-            self.accepts_value = accepts_value
+            self.page = page
+            self.click_count = 0
 
         async def evaluate(self, expression):
             if "tagName" in expression:
                 return "input"
+            if "readOnly" in expression:
+                return True
             return self.value
 
-        async def click(self):
-            return None
+        async def click(self, **_kwargs):
+            self.click_count += 1
+            self.page.popup_open = True
 
         async def fill(self, value, **_kwargs):
-            if self.accepts_value:
-                self.value = value
+            raise AssertionError("只读日期框不能直接 fill")
 
         async def press(self, _key):
             return None
 
-    async def run_case(accepts_value):
+    class FakePopup:
+        def __init__(self, page):
+            self.page = page
+
+        async def count(self):
+            return int(self.page.popup_open)
+
+    class FakePage:
+        def __init__(self):
+            self.popup_open = False
+            self.targets = {}
+
+        async def wait_for_selector(self, selector, **_kwargs):
+            return self.targets[selector]
+
+        def locator(self, _selector):
+            return FakePopup(self)
+
+        class _Keyboard:
+            async def press(self, _key):
+                return None
+
+        keyboard = _Keyboard()
+
+    async def run_case(update_value):
         checker = make_checker()
-        target = FakeDateInput(accepts_value)
-
-        async def wait_for_selector(_selector, **_kwargs):
-            return target
-
-        checker._page = SimpleNamespace(wait_for_selector=wait_for_selector)
-        checker.selectors = {"order_date_from_input": ["date-start"]}
+        page = FakePage()
+        start = FakeDateInput(page)
+        end = FakeDateInput(page)
+        page.targets = {"date-start": start, "date-end": end}
+        checker._page = page
+        checker.selectors = {
+            "order_date_from_input": ["date-start"],
+            "order_date_to_input": ["date-end"],
+        }
         checker._log = lambda *_args, **_kwargs: None
-        return await checker._fill_date_input(
+        selected = []
+
+        async def select_day(date_text):
+            selected.append(date_text)
+            if update_value:
+                if len(selected) == 1:
+                    start.value = date_text
+                else:
+                    end.value = date_text
+                    page.popup_open = False
+            return True
+
+        checker._select_calendar_day = select_day
+        start_ok = await checker._fill_date_input(
             "下单开始日期", "2026-07-26", "order_date_from_input"
         )
+        end_ok = await checker._fill_date_input(
+            "下单结束日期", "2026-09-26", "order_date_to_input"
+        )
+        return start_ok, end_ok, selected, start, end
 
-    assert asyncio.run(run_case(True)) is True
-    assert asyncio.run(run_case(False)) is False
+    start_ok, end_ok, selected, start, end = asyncio.run(run_case(True))
+    assert (start_ok, end_ok) == (True, True)
+    assert selected == ["2026-07-26", "2026-09-26"]
+    assert (start.value, end.value) == ("2026-07-26", "2026-09-26")
+    assert start.click_count == 1
+    assert end.click_count == 0
+
+    start_ok, end_ok, *_ = asyncio.run(run_case(False))
+    assert (start_ok, end_ok) == (False, False)
 
 
 def test_category_tab_reenters_dates_queries_then_restores_dates_on_list_tab():
