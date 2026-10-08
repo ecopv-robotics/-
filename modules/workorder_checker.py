@@ -1688,6 +1688,10 @@ class WorkOrderChecker:
 
     async def _fill_order_date_window(self, date_window) -> bool:
         """填写下单开始/结束日期；控件未完整设置时拒绝继续查询。"""
+        # 未完整选中并读回之前，不能把上一条记录的已提交窗口当成本条条件。
+        self._expected_query_date_window = None
+        self._last_query_response_status = None
+        self._last_query_response_note = ""
         if not date_window:
             self._last_date_filter_status = "邮件日期为空，未设置网页日期筛选"
             return False
@@ -1861,6 +1865,14 @@ class WorkOrderChecker:
             return
 
         expected = self._expected_query_date_window
+        if not expected:
+            self._last_query_response_status = "date_mismatch"
+            self._last_query_response_note = "本次点击前没有确认完整日期范围"
+            self._log(
+                f"工单查询未绑定有效日期窗口：{self._last_query_response_note}",
+                "error",
+            )
+            return
         if expected:
             params = parse_qs(urlsplit(str(response.url)).query)
             request = getattr(response, "request", None)
