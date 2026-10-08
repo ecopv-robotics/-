@@ -619,6 +619,7 @@ class ExcelWriter:
         headers = [
             "发件人邮箱", "收件人", "发件日期", "主题", "正文摘要(最多300字)",
             "附件名称", "过滤原因", "意图LLM状态", "处理时间戳", "正文原文",
+            "过滤范围", "过滤对象", "过滤客户", "过滤代理", "过滤国家", "过滤需求",
         ]
 
         for col, header in enumerate(headers, 1):
@@ -645,6 +646,12 @@ class ExcelWriter:
                 mail.get("intent_llm_status", ""),
                 now_str,
                 str(mail.get("body_text", "") or "")[:30000],
+                mail.get("filter_scope", ""),
+                mail.get("filter_object", ""),
+                mail.get("filter_company", ""),
+                mail.get("filter_agent", ""),
+                mail.get("filter_country", ""),
+                mail.get("filter_request", ""),
             ]
             for col, val in enumerate(values, 1):
                 cell = ws.cell(row=row_idx, column=col, value=val)

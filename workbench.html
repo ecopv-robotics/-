@@ -530,10 +530,10 @@
   }
   function renderQueue(){
     if(app.view==='filtered'){
-      const mails=filteredMails().filter(matchMail);
-      $('#queue-title').textContent='已过滤邮件';$('#queue-count').textContent=mails.length+' 封';
+      const mails=filteredMails().filter(matchMail),projectCount=mails.filter(m=>m.scope==='业务项目').length,emailCount=mails.length-projectCount;
+      $('#queue-title').textContent='已过滤邮件';$('#queue-count').textContent=`${emailCount} 封${projectCount?` · ${projectCount} 个业务项目`:''}`;
       $('#filters').style.display='none';
-      $('#queue-list').innerHTML=mails.length?mails.map(m=>`<div class="mail-item filtered-item ${app.mailId===m.id?'active':''}" data-mail="${esc(m.id)}"><div class="mail-line"><input class="mail-select" type="checkbox" data-select-mail="${esc(m.id)}" ${app.selectedMailIds.has(m.id)?'checked':''} aria-label="选择邮件"/><div class="mail-subject">${esc(m.subject||'无主题')} <span class="mail-number">邮件编号 ${esc(m.mail_number||m.id)}</span></div></div><div class="mail-meta"><span>${esc(m.sender||'未知发件人')}</span><span>${esc(m.date||'')}</span></div><div class="filter-reason">过滤原因：${esc(m.reason||'未记录')}</div><div style="margin-top:7px;display:flex;justify-content:space-between;align-items:center"><span class="muted">${m.settled?'已定论过滤':'待人工确认'}</span><span class="pill review">已过滤</span></div></div>`).join(''):'<div class="empty">没有符合条件的已过滤邮件</div>';
+      $('#queue-list').innerHTML=mails.length?mails.map(m=>`<div class="mail-item filtered-item ${app.mailId===m.id?'active':''}" data-mail="${esc(m.id)}"><div class="mail-line"><input class="mail-select" type="checkbox" data-select-mail="${esc(m.id)}" ${app.selectedMailIds.has(m.id)?'checked':''} aria-label="选择邮件"/><div class="mail-subject">${esc(m.subject||'无主题')} <span class="mail-number">邮件编号 ${esc(m.mail_number||m.id)}</span></div></div><div class="mail-meta"><span>${esc(m.sender||'未知发件人')}</span><span>${esc(m.date||'')}</span></div><div class="filter-reason">${m.scope==='业务项目'?'过滤项目':'过滤原因'}：${esc(m.project||m.reason||'未记录')}</div><div style="margin-top:7px;display:flex;justify-content:space-between;align-items:center"><span class="muted">${m.scope==='业务项目'?'仅此项目过滤':m.settled?'已定论过滤':'待人工确认'}</span><span class="pill review">${m.scope==='业务项目'?'项目已过滤':'已过滤'}</span></div></div>`).join(''):'<div class="empty">没有符合条件的已过滤邮件</div>';
       document.querySelectorAll('[data-mail]').forEach(n=>n.onclick=()=>{app.mailId=n.dataset.mail;app.detailId=null;app.tab='raw';render()});
       bindQueueSelection();
       return;
@@ -567,7 +567,7 @@
   }
   function currentFiltered(){return filteredMails().find(m=>m.id===app.mailId)}
   function currentDetail(){const m=currentMail();return m?.details.find(d=>d.id===app.detailId)||m?.details[0]}
-  function renderFilteredDetail(){const m=currentFiltered();if(!m){$('#detail').innerHTML='<div class="empty">请从左侧选择一封已过滤邮件</div>';return}const attachments=(m.attachments||'').split(/[；;]+/).filter(Boolean).map(a=>attachmentChip(m,a)).join('')||'<span class="muted">无附件</span>';$('#detail').innerHTML=`<div class="detail-head"><span class="pill review">已过滤</span><div class="detail-title">${esc(m.subject||'无主题')}</div><div class="detail-meta"><span>发件人：${esc(m.sender||'未知')}</span><span>时间：${esc(m.date||'')}</span><span>来源：阶段一过滤日志</span></div><div class="evidence-sub" style="margin-top:10px">这封邮件已被阶段一规则或意图识别判定为非询单，单独保留用于人工追溯；不会自动进入工单查询。</div></div><div class="steps"><div class="step done">邮件归档</div><div class="step done">附件盘点</div><div class="step done">规则过滤</div><div class="step active">人工查看</div><div class="step">待工单比对</div></div><div class="tabs"><button class="active">邮件原文</button></div><div class="detail-body"><h3 class="section-title">邮件正文摘要</h3><div class="raw">${esc(m.body||'（过滤日志未保存正文摘要）')}</div><h3 class="section-title" style="margin-top:18px">附件清单</h3><div>${attachments}</div></div>`}
+  function renderFilteredDetail(){const m=currentFiltered();if(!m){$('#detail').innerHTML='<div class="empty">请从左侧选择一封已过滤邮件</div>';return}const attachments=(m.attachments||'').split(/[；;]+/).filter(Boolean).map(a=>attachmentChip(m,a)).join('')||'<span class="muted">无附件</span>',projectScoped=m.scope==='业务项目';$('#detail').innerHTML=`<div class="detail-head"><span class="pill review">${projectScoped?'项目已过滤':'已过滤'}</span><div class="detail-title">${esc(m.subject||'无主题')}</div><div class="detail-meta"><span>发件人：${esc(m.sender||'未知')}</span><span>时间：${esc(m.date||'')}</span><span>来源：阶段一过滤日志</span></div><div class="evidence-sub" style="margin-top:10px">${projectScoped?`仅排除非目标项目“${esc(m.project||'未命名项目')}”；同封邮件中的其他目标业务仍留在询单复核。`: '这封邮件已被阶段一规则或意图识别判定为非询单，单独保留用于人工追溯；不会自动进入工单查询。'}</div></div><div class="steps"><div class="step done">邮件归档</div><div class="step done">附件盘点</div><div class="step done">${projectScoped?'项目范围过滤':'规则过滤'}</div><div class="step active">人工查看</div><div class="step">待工单比对</div></div><div class="tabs"><button class="active">邮件原文</button></div><div class="detail-body"><h3 class="section-title">邮件正文摘要</h3><div class="raw">${esc(m.body||'（过滤日志未保存正文摘要）')}</div><h3 class="section-title" style="margin-top:18px">附件清单</h3><div>${attachments}</div></div>`}
   // 附件数量校验继续保存在数据和证据面板，仅不在业务卡片重复显示小字摘要。
   function attachmentAuditText(a){return ''}
   function renderDetail(){if(app.view==='filtered'){renderFilteredDetail();return}const m=currentMail(),d=currentDetail();if(!m||!d){$('#detail').innerHTML='<div class="empty">请从左侧选择一封询单</div>';$('#evidence').innerHTML='<div class="empty">等待选择业务明细</div>';return}const steps=d.status==='confirmed'?['done','done','done','done','done']:['done','done','done',d.status==='review'?'active':'done',''];const audit=attachmentAuditText(d.attachment_audit);let body='';if(app.tab==='raw')body=`<h3 class="section-title">邮件正文摘要</h3><div class="raw">${esc(m.body||'（正文摘要为空）')}</div><h3 class="section-title" style="margin-top:18px">附件清单</h3><div>${(m.attachments||'').split(/[；;]+/).filter(Boolean).map(a=>`<span class="attachment">${esc(a)}</span>`).join('')||'<span class="muted">无附件</span>'}</div>`;else if(app.tab==='events')body=`<h3 class="section-title">操作记录</h3>${d.events?.length?d.events.slice().reverse().map(e=>`<div class="event"><b>${esc(e.label)}</b> · ${esc(e.at)}${e.reason?`<br>原因：${esc(e.reason)}`:''}</div>`).join(''):'<div class="empty">当前明细还没有人工操作记录</div>'}`;else body=`<div class="section-title">业务明细 <span class="muted">· 选择一条查看左侧证据</span></div><div class="detail-grid">${m.details.map(x=>{const a=attachmentAuditText(x.attachment_audit);return `<div class="business ${x.id===app.detailId?'selected':''}" data-detail="${esc(x.id)}"><div class="row"><span class="key">代理</span><span class="value">${esc(x.fields.agent||'待人工确认')}</span></div><div class="row"><span class="key">公司</span><span class="value">${esc(x.fields.company||'待确认')}</span></div><div class="row"><span class="key">国家</span><span class="value">${esc(x.fields.country||'待确认')}</span></div><div class="row"><span class="key">项目</span><span class="value">${esc(x.fields.program||'待确认')}</span></div>${a?`<div class="row"><span class="key">附件表</span><span class="value">${a}</span></div>`:''}<div class="card-foot"><span class="pill ${statusClass(x.status)}">${statusLabel(x.status)}</span><span class="muted">${esc(x.confidence)}</span></div></div>`}).join('')}</div>`;$('#detail').innerHTML=`<div class="detail-head"><span class="pill ${statusClass(m.status)}">${statusLabel(m.status)}</span><div class="detail-title">${esc(m.subject||'无主题')}</div><div class="detail-meta"><span>发件人：${esc(m.sender||'未知')}</span><span>时间：${esc(m.date||'')}</span><span>来源：${esc(d.source)}</span></div>${audit?`<div class="evidence-sub" style="margin-top:8px"><b>${audit}</b></div>`:''}${d.review_hint?`<div class="evidence-sub" style="margin-top:8px">人工提示：${esc(d.review_hint)}</div>`:''}<div class="detail-actions"><button class="btn small primary" id="edit" title="修正当前明细">修正明细</button><button class="btn small" id="agent" title="${d.fields.agent?'确认代理归属':'补全代理'}">${d.fields.agent?'确认代理':'补全代理'}</button><button class="btn small" id="confirm" title="确认整理完成">整理完成</button><button class="btn small" id="return" title="退回复核">退回复核</button><button class="btn small" id="add-project" title="新增项目">＋新增</button><button class="btn small danger" id="del-project" title="删除该项目">删除项目</button></div></div><div class="agent-row"><div><span class="muted">代理归属：</span><strong>${esc(d.fields.agent||'待人工确认')}</strong></div><span class="agent-state">${esc(d.agent_match||'待确认')}</span></div><div class="steps">${['邮件归档','附件盘点','记录展开','人工复核','待工单比对'].map((x,i)=>`<div class="step ${steps[i]}">${x}</div>`).join('')}</div><div class="tabs"><button class="${app.tab==='details'?'active':''}" data-tab="details">业务明细</button><button class="${app.tab==='raw'?'active':''}" data-tab="raw">邮件原文</button><button class="${app.tab==='events'?'active':''}" data-tab="events">操作记录</button></div><div class="detail-body">${body}</div>`;document.querySelectorAll('[data-detail]').forEach(n=>n.onclick=()=>{app.detailId=n.dataset.detail;render()});document.querySelectorAll('[data-tab]').forEach(n=>n.onclick=()=>{app.tab=n.dataset.tab;render()});$('#edit').onclick=()=>openModal(d);$('#agent').onclick=()=>openModal(d,'agent');$('#confirm').onclick=()=>doAction('confirm',{},'人工确认：字段已核对');$('#return').onclick=()=>doAction('return',{},'退回复核：需要人工进一步确认');$('#add-project').onclick=()=>openModal(d,'add');$('#del-project').onclick=()=>deleteProject()}
@@ -768,8 +768,8 @@
     const bar=$('#queue-selectbar');if(bar)bar.style.display='flex';
   };
   renderStats=function(){
-    const active=(app.data?.mails||[]).filter(dateMatches),details=active.flatMap(m=>m.details||[]),filtered=(app.data?.filtered_mails||[]).filter(dateMatches),missing=(app.data?.missing_mails||[]).filter(dateMatches);
-    const c={imap:app.data?.counts?.imap_read_total||0,mails:active.length,total:active.length+filtered.length,details:details.length,review:details.filter(d=>d.status==='review').length,confirmed:details.filter(detailStage2Ready).length,filtered:filtered.length};
+    const active=(app.data?.mails||[]).filter(dateMatches),details=active.flatMap(m=>m.details||[]),filtered=(app.data?.filtered_mails||[]).filter(dateMatches),emailFiltered=filtered.filter(m=>m.scope!=='业务项目');
+    const c={imap:app.data?.counts?.imap_read_total||0,mails:active.length,total:active.length+emailFiltered.length,details:details.length,review:details.filter(d=>d.status==='review').length,confirmed:details.filter(detailStage2Ready).length,filtered:emailFiltered.length};
     $('#stats').innerHTML=[['imap','IMAP读取邮件',''],['total','邮件总数',''],['mails','询单邮件',''],['details','业务明细',''],['review','待人工复核','amber'],['confirmed','已完成明细','green'],['filtered','已过滤邮件','red']].map(x=>`<div class="stat ${x[2]}"><div class="num">${x[0]==='imap'?(c.imap||'—'):(c[x[0]]??0)}</div><div class="label">${x[1]}</div></div>`).join('');
     setHistoryState();
   };
@@ -1735,10 +1735,10 @@
     }
     if(inbox){
       $('#queue-title').textContent='询单复核';
-      const active=(app.data?.mails||[]).filter(dateMatches),filtered=(app.data?.filtered_mails||[]).filter(dateMatches);
-      const stats=[['IMAP读取邮件',app.data?.counts?.imap_read_total||'—'],['邮件总数',active.length+filtered.length],
+      const active=(app.data?.mails||[]).filter(dateMatches),filtered=(app.data?.filtered_mails||[]).filter(dateMatches),emailFiltered=filtered.filter(mail=>mail.scope!=='业务项目');
+      const stats=[['IMAP读取邮件',app.data?.counts?.imap_read_total||'—'],['邮件总数',active.length+emailFiltered.length],
         ['询单待处理',pending.length],['待处理业务',pending.flatMap(mail=>mail.details||[]).filter(detail=>!detailStage2Ready(detail)).length],
-        ['待复核邮件',pending.filter(mail=>mail.status==='review').length],['待确认邮件',pending.filter(mail=>mail.status==='ready').length],['已过滤邮件',filtered.length]];
+        ['待复核邮件',pending.filter(mail=>mail.status==='review').length],['待确认邮件',pending.filter(mail=>mail.status==='ready').length],['已过滤邮件',emailFiltered.length]];
       $('#stats').innerHTML=stats.map(([label,count])=>`<div class="stat"><div class="num">${count}</div><div class="label">${label}</div></div>`).join('');
     }
   };
@@ -2010,6 +2010,56 @@
   render=function(){renderBeforeCalendar();refreshCalendarStatus()};
   window.addEventListener('online',()=>load());
   startHealthMonitor();
+  // 项目级过滤记录可与同封活动邮件并存：展示为过滤项目，但不重复计入邮件总数。
+  const renderQueueBeforeProjectScope=renderQueue;
+  renderQueue=function(){
+    renderQueueBeforeProjectScope();
+    if(app.view!=='filtered')return;
+    const visible=queueMails(),projectCount=visible.filter(mail=>mail.scope==='业务项目').length;
+    const emailCount=visible.length-projectCount;
+    $('#queue-count').textContent=`${emailCount} 封${projectCount?` · ${projectCount} 个业务项目`:''}`;
+    document.querySelectorAll('#queue-list [data-mail]').forEach(node=>{
+      const mail=visible.find(item=>item.id===node.dataset.mail);
+      if(!mail||mail.scope!=='业务项目')return;
+      const reason=node.querySelector('.filter-reason'),status=node.querySelector('.mail-meta+div+div span.muted'),pill=node.querySelector('.mail-meta+div+div .pill');
+      if(reason)reason.textContent=`过滤项目：${mail.project||mail.reason||'未记录'}`;
+      if(status)status.textContent='仅此项目过滤';
+      if(pill)pill.textContent='项目已过滤';
+    });
+  };
+  const renderDetailBeforeProjectScope=renderDetail;
+  renderDetail=function(){
+    renderDetailBeforeProjectScope();
+    if(app.view!=='filtered')return;
+    const mail=currentFiltered(),note=document.querySelector('#detail .detail-head .evidence-sub');
+    if(mail?.scope==='业务项目'&&note)note.textContent=`仅过滤项目“${mail.project||'未命名项目'}”；同封邮件中的其他目标业务仍可在询单复核中继续处理。`;
+    const restore=document.getElementById('restore-review');
+    if(mail?.scope==='业务项目'&&restore){restore.textContent='恢复此项目并复核';restore.title='恢复该项目到原邮件中，并要求人工确认目标业务范围';}
+  };
+  const renderEvidenceBeforeProjectScope=renderEvidence;
+  renderEvidence=function(){
+    renderEvidenceBeforeProjectScope();
+    if(app.view!=='filtered')return;
+    const mail=currentFiltered();
+    if(mail?.scope!=='业务项目')return;
+    const intro=document.querySelector('#evidence .evidence-sub');
+    if(intro)intro.textContent='该记录仅排除一个非目标业务项目；同封邮件中的目标业务保留在询单队列。';
+    const queueCard=[...document.querySelectorAll('#evidence .ev-card')].find(card=>card.querySelector('.ev-label')?.textContent.includes('队列归属'));
+    const queueLine=queueCard?.querySelector('.ev-line');
+    if(queueLine)queueLine.textContent='该项目不会进入工单核对；同封其他目标业务照常处理。';
+  };
+  const renderStatsBeforeProjectScope=renderStats;
+  renderStats=function(){
+    renderStatsBeforeProjectScope();
+    const active=(app.data?.mails||[]).filter(dateMatches);
+    const emailFiltered=(app.data?.filtered_mails||[]).filter(mail=>dateMatches(mail)&&mail.scope!=='业务项目');
+    document.querySelectorAll('#stats .stat').forEach(card=>{
+      const label=card.querySelector('.label')?.textContent.trim(),number=card.querySelector('.num');
+      if(!number)return;
+      if(label==='邮件总数')number.textContent=String(active.length+emailFiltered.length);
+      else if(label==='已过滤邮件')number.textContent=String(emailFiltered.length);
+    });
+  };
   const runConsoleButton=$('#run-console-link'),runConsolePage=$('#run-console-page'),mainPage=$('.main');
   function showRunConsole(open){
     mainPage.classList.toggle('console-open',open);runConsolePage.hidden=!open;

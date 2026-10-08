@@ -1627,7 +1627,7 @@ class WorkbenchStore:
         project = _text(row.get("标准化项目名称"))
         # 国家必须从项目名里解析出「国家」本身，不能按空格硬切
         # （"奥地利WEEE" 无空格，旧写法会让国家列显示成 "奥地利WEEE"）。
-        country = country_of_project(project)
+        country = country_of_project(project) or _text(row.get("国家"))
         return {
             "agent": _text(row.get("代理")) or _text(row.get("代理(可能空)")),
             "customer_code": _text(row.get("客户编号")),
@@ -2318,6 +2318,8 @@ class WorkbenchStore:
                     "body": body,
                     "attachments": _text(row.get("附件名称")),
                     "reason": reason,
+                    "scope": _text(row.get("过滤范围")),
+                    "project": _text(row.get("过滤对象")),
                     "intent_status": _text(row.get("意图LLM状态")),
                     "processed_at": _text(row.get("处理时间戳")),
                     "settled": _is_settled_filter(reason),
@@ -2341,10 +2343,21 @@ class WorkbenchStore:
                 row["邮件主题"] = row.get("主题", "")
                 row["邮件正文摘要(最多300字)"] = row.get("过滤原因", "")
                 row["附件名称"] = row.get("附件名称", "")
-                row["客户公司名称"] = ""
-                row["标准化项目名称"] = ""
-                row["需求"] = ""
-                row["人工复核提示"] = row.get("过滤原因", "")
+                row["邮件正文原文"] = row.get("正文原文") or row.get("邮件正文原文") or row.get("正文摘要(最多300字)") or ""
+                if _text(row.get("过滤范围")) == "业务项目":
+                    row["客户公司名称"] = row.get("过滤客户", "")
+                    row["代理"] = row.get("过滤代理", "")
+                    row["国家"] = row.get("过滤国家", "")
+                    row["标准化项目名称"] = row.get("过滤对象", "")
+                    row["项目原始值"] = row.get("过滤对象", "")
+                    row["项目规范化状态"] = "未匹配"
+                    row["需求"] = row.get("过滤需求", "")
+                    row["人工复核提示"] = "人工恢复的项目级过滤记录，请核对目标业务范围与公司/代理关系"
+                else:
+                    row["客户公司名称"] = ""
+                    row["标准化项目名称"] = ""
+                    row["需求"] = ""
+                    row["人工复核提示"] = row.get("过滤原因", "")
                 row["数据来源"] = "过滤日志"
                 details.append(self._record(row, state))
             groups: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
@@ -2531,6 +2544,21 @@ class WorkbenchStore:
             for item in filtered_mails:
                 aliases = _mail_identity_aliases(item)
                 record_aliases = {alias for alias in aliases if alias[0] != "subject-day"}
+                project_scoped = _text(item.get("scope") or item.get("过滤范围")) == "业务项目"
+                if project_scoped:
+                    # 项目级排除与同一封仍需处理的目标邮件共存；只按“邮件+项目”
+                    # 去重，不能被邮件级互斥规则吞掉。若整封邮件已被人工过滤，
+                    # 则由人工邮件级记录代表，避免重复展示。
+                    if aliases & manual_keys:
+                        overlap_removed += 1
+                        continue
+                    identity = min(record_aliases or aliases) if aliases else ("id", _text(item.get("id")))
+                    project_signature = ("project-filter", _text(item.get("project") or item.get("过滤对象")).casefold(), *identity)
+                    if project_signature in seen_filtered:
+                        continue
+                    seen_filtered.add(project_signature)
+                    deduped_filtered.append(item)
+                    continue
                 if aliases & (current_mail_keys | manual_keys):
                     overlap_removed += 1
                     continue
@@ -2572,13 +2600,12 @@ class WorkbenchStore:
                 "returned": sum(1 for d in all_details if d["status"] == "returned"),
                 "needs_info": sum(1 for d in all_details if d["status"] == "needs_info"),
                 # 当前过滤页包含阶段一过滤日志及人工转入的邮件。
-                "filtered": len(filtered_mails),
+                "filtered": sum(1 for item in filtered_mails if _text(item.get("scope")) != "业务项目"),
                 "overlap_removed": overlap_removed,
-                # 主询单队列与已过滤邮件已经在上面按邮件身份去重；
-                # 因此这个总数是当前快照的互斥邮件总数，不把同一封邮件重复计算。
-                "total_mails": len(mails) + len(filtered_mails),
+                # 项目级过滤是邮件中的一条业务记录，不应把同一封邮件重复计入总邮件数。
+                "total_mails": len(mails) + sum(1 for item in filtered_mails if _text(item.get("scope")) != "业务项目"),
                 # 保留旧字段，兼容已有前端、缓存和导出调用。
-                "unique_mails": len(mails) + len(filtered_mails),
+                "unique_mails": len(mails) + sum(1 for item in filtered_mails if _text(item.get("scope")) != "业务项目"),
                 # 最近一次阶段一向 IMAP SEARCH 请求得到的原始数量，
                 # 与当前工作台的互斥台账总数严格区分。
                 "imap_read_total": imap_summary.get("imap_read_total", 0),

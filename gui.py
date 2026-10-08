@@ -1055,6 +1055,12 @@ class WorkerThread(QThread):
                         "attachments": attachments,
                         "filter_reason": f"明确非目标项目：{project or '德国一次性塑料税'}",
                         "intent_llm_status": "明确非目标项目",
+                        "filter_scope": "业务项目",
+                        "filter_object": project,
+                        "filter_company": row.get("客户", ""),
+                        "filter_agent": row.get("代理", ""),
+                        "filter_country": row.get("国家", ""),
+                        "filter_request": row.get("需求", ""),
                         "filter_status": "filtered",
                         "hard_filter": True,
                     })
