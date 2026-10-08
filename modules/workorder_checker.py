@@ -1481,9 +1481,7 @@ class WorkOrderChecker:
         return date_type(year, month, day)
 
     def _email_date_window(self, mail_date):
-        """返回邮件发件日期前后一个日历月的闭区间日期。"""
-        if self.date_window_months <= 0:
-            return None
+        """返回邮件发件日期前后日历月的闭区间；配置为 0 时使用邮件当天。"""
         if isinstance(mail_date, datetime):
             anchor = mail_date.date()
         elif isinstance(mail_date, date_type):
@@ -1493,6 +1491,8 @@ class WorkOrderChecker:
             anchor = parsed.date() if parsed else None
         if anchor is None:
             return None
+        if self.date_window_months <= 0:
+            return (anchor, anchor)
         return (
             self._add_calendar_months(anchor, -self.date_window_months),
             self._add_calendar_months(anchor, self.date_window_months),
@@ -1544,7 +1544,7 @@ class WorkOrderChecker:
         return False
 
     async def _fill_order_date_window(self, date_window) -> bool:
-        """填写下单开始/结束日期；任一控件缺失时仍保留本地筛选。"""
+        """填写下单开始/结束日期；控件未完整设置时拒绝继续查询。"""
         if not date_window:
             self._last_date_filter_status = "邮件日期为空，未设置网页日期筛选"
             return False
@@ -1558,9 +1558,9 @@ class WorkOrderChecker:
         if from_ok and to_ok:
             self._last_date_filter_status = "网页已设置邮件日期前后1个月"
         elif from_ok or to_ok:
-            self._last_date_filter_status = "网页日期控件部分设置，已使用本地日期筛选"
+            self._last_date_filter_status = "网页日期控件仅设置一端，查询条件不完整"
         else:
-            self._last_date_filter_status = "网页日期控件未找到，已使用本地日期筛选"
+            self._last_date_filter_status = "网页日期控件未找到，查询条件不完整"
         if not (from_ok and to_ok):
             self._log(self._last_date_filter_status, "warning")
         return from_ok and to_ok
@@ -1797,14 +1797,19 @@ class WorkOrderChecker:
             if self.input_step_delay:
                 await asyncio.sleep(self.input_step_delay)
 
-        # 页面日期条件使用邮件发件日期前后一个日历月；即使页面控件定位失败，
-        # search_one 后面的本地 match_records 仍会再次按同一窗口筛选。
-        if mail_date is not None:
-            await self._fill_order_date_window(
-                date_window if date_window is not None else self._email_date_window(mail_date)
-            )
-            if self.input_step_delay:
-                await asyncio.sleep(self.input_step_delay)
+        # 日期是工单查询的必需条件；只在本地过滤无法证明网页查询按日期执行，
+        # 因此缺日期或日期控件未完整填写时不得提交查询。
+        if mail_date is None:
+            self._last_date_filter_status = "邮件日期为空，查询条件不完整"
+            return False
+        effective_date_window = date_window if date_window is not None else self._email_date_window(mail_date)
+        if not effective_date_window:
+            self._last_date_filter_status = "邮件日期无法解析，查询条件不完整"
+            return False
+        if not await self._fill_order_date_window(effective_date_window):
+            return False
+        if self.input_step_delay:
+            await asyncio.sleep(self.input_step_delay)
         return True
 
     async def search_one(
@@ -2598,9 +2603,6 @@ class WorkOrderChecker:
                 termination_reason = "总超时"
                 break
 
-            if not row.get("客户"):
-                continue
-
             company = row.get("客户", "")
             agent = row.get("代理", "")
             project = row.get("项目", "")
@@ -2633,6 +2635,32 @@ class WorkOrderChecker:
                     f"{company!r}（{reject_reason}）",
                     "warning",
                 )
+                self.last_processed_rows.append(row)
+                all_results.append(row)
+                continue
+
+            missing_conditions = []
+            if not str(agent or "").strip():
+                missing_conditions.append("代理")
+            if not str(country or "").strip():
+                missing_conditions.append("国家")
+            if not str(service_item or "").strip():
+                missing_conditions.append("服务类别")
+            if not date_window:
+                missing_conditions.append("有效邮件日期")
+            if missing_conditions:
+                reason = "缺少必需查询条件：" + "、".join(missing_conditions)
+                row["是否已录单"] = "未比对"
+                row["匹配状态"] = "查询条件不完整"
+                row["RPA查询状态"] = "查询条件不完整-未执行"
+                row["查询方式"] = "未查询"
+                row["模糊查询词"] = ""
+                row["日期筛选说明"] = reason
+                row["_query_error"] = reason
+                self._apply_weee_category_audit(row, [], "查询条件不完整-未执行")
+                self._apply_battery_category_audit(row, [], "查询条件不完整-未执行")
+                row["查询时间戳"] = datetime.now().isoformat(timespec="seconds")
+                self._log(f"第 {idx}/{total} 条条件不完整，未提交查询：{reason}", "warning")
                 self.last_processed_rows.append(row)
                 all_results.append(row)
                 continue

@@ -41,7 +41,8 @@ def test_exact_click_failure_does_not_read_previous_table():
     checker._debug_screenshot = lambda *_args, **_kwargs: asyncio.sleep(0)
     checker._click_query_button = click
     checker._extract_table_data = extract
-    result = asyncio.run(checker.search_one("示例科技有限公司", country="波兰", service_item="包装法"))
+    result = asyncio.run(checker.search_one("示例科技有限公司", country="波兰", service_item="包装法",
+                                             mail_date="2026-08-20"))
 
     assert result == []
     assert reads == []
@@ -74,7 +75,8 @@ def test_refresh_timeout_does_not_read_previous_table():
     checker._click_query_button = click
     checker._wait_for_table_refresh = no_refresh
     checker._extract_table_data = extract
-    result = asyncio.run(checker.search_one("示例科技有限公司", country="波兰", service_item="包装法"))
+    result = asyncio.run(checker.search_one("示例科技有限公司", country="波兰", service_item="包装法",
+                                             mail_date="2026-08-20"))
 
     assert result == []
     assert reads == []
@@ -129,7 +131,8 @@ def test_fuzzy_click_failure_does_not_read_exact_query_table_again():
     checker._extract_table_data = extract
     checker._get_fuzzy_company_terms = lambda _company: ["示例科技有限公司", "示例科技"]
 
-    result = asyncio.run(checker.search_one("示例科技有限公司", country="波兰", service_item="包装法"))
+    result = asyncio.run(checker.search_one("示例科技有限公司", country="波兰", service_item="包装法",
+                                             mail_date="2026-08-20"))
 
     assert result == []
     assert len(reads) == 1  # Only the exact query was read; fuzzy failure must not reuse it.
@@ -173,16 +176,18 @@ def test_search_batch_forces_live_query_for_each_valid_row_even_if_disabled_in_c
     checker.match_records = match
     checker._log = lambda *_args, **_kwargs: None
     rows = [
-        {"客户": "示例科技有限公司", "代理": "代理甲", "项目": "波兰包装法"},
-        {"客户": "样例贸易有限公司", "代理": "代理甲", "项目": "波兰包装法"},
+        {"客户": "示例科技有限公司", "代理": "代理甲", "项目": "波兰包装法", "date": "2026-08-20"},
+        {"客户": "样例贸易有限公司", "代理": "代理甲", "项目": "波兰包装法", "date": "2026-08-20"},
+        {"客户": "缺少日期有限公司", "代理": "代理甲", "项目": "波兰包装法"},
     ]
 
     result = asyncio.run(checker.search_batch(rows))
 
-    assert len(result) == 2
+    assert len(result) == 3
     assert observed_live_flags == [True, True]
     assert checker._query_click_count == 2
     assert checker.force_live_query is False
+    assert result[2]["RPA查询状态"] == "查询条件不完整-未执行"
 
 
 def test_german_workorder_export_requires_completed_special_audit():
