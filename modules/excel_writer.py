@@ -777,9 +777,10 @@ class ExcelWriter:
 
         for category, business_project, country, items in cls._workorder_result_groups(row):
             brands = [str(item.get("brand") or item.get("品牌") or "") for item in items]
-            if not brands:
+            if not cls._unique_text(brands):
                 raw_brand = row.get("品牌") or row.get("品牌名称") or ""
                 brands = raw_brand if isinstance(raw_brand, list) else [str(raw_brand)]
+            brand_value = cls._unique_text(brands) or "无"
 
             german_classes = []
             for item in items:
@@ -801,8 +802,8 @@ class ExcelWriter:
                 country,
                 business,
                 company,
-                cls._unique_text(brands),
-                cls._unique_text(german_classes),
+                brand_value,
+                cls._unique_text(german_classes) or "无",
                 success,
                 failure_reason,
             ])
@@ -815,7 +816,7 @@ class ExcelWriter:
         ws = wb.active
         ws.title = "工单核对"
         headers = [
-            "类别", "代理", "国家", "具体业务", "公司名称", "品牌", "德国分类",
+            "类别", "代理", "国家", "具体业务", "公司名称", "品牌", "分类",
             "是否成功", "失败原因",
         ]
         ws.append(headers)
