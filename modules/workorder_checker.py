@@ -1124,6 +1124,36 @@ class WorkOrderChecker:
             )
         return best
 
+    async def _find_unique_agent_alias_option(self, value_norm: str):
+        """全称只包含一个足够长的可见代理简称时，安全地选择该简称。"""
+        if not value_norm or len(value_norm) < 6:
+            return None
+        matches = {}
+        for selector in self.selectors["dropdown_option"]:
+            try:
+                options = await self._page.query_selector_all(selector)
+            except Exception:
+                continue
+            for option in options:
+                try:
+                    if not await option.is_visible():
+                        continue
+                    text = (await option.inner_text()).strip()
+                    option_norm = normalize_text(text)
+                    # 短词（如“华”“星”）偶然出现在公司全称里时不能作为代理别名。
+                    if len(option_norm) >= 3 and option_norm in value_norm:
+                        matches.setdefault(option_norm, (option, text))
+                except Exception:
+                    continue
+        if len(matches) != 1:
+            return None
+        option, text = next(iter(matches.values()))
+        self._log(
+            f"所属代理全称命中唯一平台简称: 输入={value_norm}, 页面选项={text}",
+            "warning",
+        )
+        return option
+
     async def _select_dropdown(
         self,
         field_name: str,
@@ -1212,11 +1242,25 @@ class WorkOrderChecker:
                                 await asyncio.sleep(0.2)
                         except Exception:
                             pass
-                        option = await self._find_best_dropdown_option(value_norm)
+                        option = await self._find_unique_agent_alias_option(value_norm)
+                        if option is None:
+                            option = await self._find_best_dropdown_option(value_norm)
                     if option:
                         await option.click()
                         await asyncio.sleep(0.2)
-                        self._log(f"{field_name} 选择: {value} (精确控件)")
+                        selected_text = ""
+                        if field_name == "所属代理":
+                            try:
+                                selected_text = (await option.inner_text()).strip()
+                            except Exception:
+                                selected_text = ""
+                        if (field_name == "所属代理" and selected_text
+                                and normalize_text(selected_text) != value_norm):
+                            self._log(
+                                f"{field_name} 选择: {value} → {selected_text}"
+                            )
+                        else:
+                            self._log(f"{field_name} 选择: {value} (精确控件)")
                         return True
                     await self._page.keyboard.press("Escape")
                     available = await self._visible_dropdown_texts(limit=8)
