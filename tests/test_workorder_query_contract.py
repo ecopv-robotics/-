@@ -241,16 +241,16 @@ def test_successful_matching_query_response_confirms_identical_stable_table():
     assert asyncio.run(checker._wait_for_table_refresh("same result")) is True
 
 
-def test_date_mismatch_query_response_never_confirms_table_refresh():
+def test_http_error_query_response_never_confirms_table_refresh():
     checker = make_checker()
-    checker._last_query_response_status = "date_mismatch"
-    checker._last_query_response_note = "expected date window absent from request"
+    checker._last_query_response_status = "http_error"
+    checker._last_query_response_note = "HTTP 500"
     checker._table_loading_visible = lambda: asyncio.sleep(0, result=False)
     checker._table_fingerprint = lambda: asyncio.sleep(0, result="new-looking result")
     assert asyncio.run(checker._wait_for_table_refresh("old result")) is False
 
 
-def test_query_response_must_include_exact_expected_date_window():
+def test_query_response_does_not_require_date_parameters():
     checker = make_checker()
     checker._expected_query_date_window = ("2026-07-26", "2026-09-26")
 
@@ -270,12 +270,11 @@ def test_query_response_must_include_exact_expected_date_window():
 
     FakeResponse.url = "https://work.example/api/work/orderRegister/queryPageList"
     checker._record_query_response(FakeResponse())
-    assert checker._last_query_response_status == "date_mismatch"
+    assert checker._last_query_response_status == "ok"
 
     checker._expected_query_date_window = None
     checker._record_query_response(FakeResponse())
-    assert checker._last_query_response_status == "date_mismatch"
-    assert "没有确认完整日期范围" in checker._last_query_response_note
+    assert checker._last_query_response_status == "ok"
 
 
 def test_failed_date_entry_clears_previous_submitted_window():
@@ -295,7 +294,7 @@ def test_failed_date_entry_clears_previous_submitted_window():
     assert checker._expected_query_date_window is None
 
 
-def test_query_form_refuses_to_submit_when_date_controls_are_incomplete():
+def test_query_form_continues_when_date_controls_are_incomplete():
     checker = make_checker()
 
     async def no_op():
@@ -317,7 +316,7 @@ def test_query_form_refuses_to_submit_when_date_controls_are_incomplete():
         "示例科技有限公司", agent="代理甲", country="波兰", service_item="包装法",
         mail_date="2026-08-20", date_window=window,
     ))
-    assert result is False
+    assert result is True
     assert "查询条件不完整" in checker._last_date_filter_status
 
 
