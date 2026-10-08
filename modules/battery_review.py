@@ -341,8 +341,7 @@ def compare_battery_categories(items, workorders):
                 continue
             brand_norm = _norm(brand)
             registered_brand = _norm(pair["brand"])
-            brand_hit = bool(brand_norm and registered_brand and (
-                brand_norm == registered_brand or brand_norm in registered_brand or registered_brand in brand_norm))
+            brand_hit = bool(brand_norm and registered_brand and brand_norm == registered_brand)
             category_hit = pair["category_class"] == category_class
             if not category_hit and category:
                 category_hit = _norm(category) == _norm(pair["category"])

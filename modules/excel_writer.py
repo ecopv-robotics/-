@@ -771,20 +771,22 @@ class ExcelWriter:
                 audit = None
             audit = audit if isinstance(audit, dict) else {}
             audit_status = str(audit.get("status") or "pending")
+            descriptions = []
+            for item in audit.get("extra_items") or []:
+                if not isinstance(item, dict):
+                    continue
+                brand = str(item.get("brand") or "无").strip()
+                category_value = str(item.get("category_class") or item.get("category") or "无").strip()
+                descriptions.append(f"{brand}（{category_value}）")
+            extra_hint = f"{label}额外品类：" + "、".join(descriptions) if descriptions else ""
             if audit_status != "matched":
                 detail = str(audit.get("reason") or "未取得可确认的品类核验结果")
-                return "否", f"{label}品类核验{('缺项/不符' if audit_status == 'missing' else '待复核')}：{detail}"
-            extras = audit.get("extra_items") or []
-            if extras:
-                descriptions = []
-                for item in extras:
-                    if not isinstance(item, dict):
-                        continue
-                    brand = str(item.get("brand") or "无").strip()
-                    category_value = str(item.get("category_class") or item.get("category") or "无").strip()
-                    descriptions.append(f"{brand}（{category_value}）")
-                if descriptions:
-                    extra_hints.append(f"{label}额外品类：" + "、".join(descriptions))
+                reason = f"{label}品类核验{('缺项/不符' if audit_status == 'missing' else '待复核')}：{detail}"
+                if extra_hint:
+                    reason += "；" + extra_hint
+                return "否", reason
+            if extra_hint:
+                extra_hints.append(extra_hint)
         if found == "是":
             return ("是", "核对通过；" + "；".join(extra_hints)) if extra_hints else ("是", "")
         if found == "否":

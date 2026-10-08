@@ -111,6 +111,14 @@ def test_battery_brand_and_type_cannot_be_cross_paired_between_rows():
     assert result["status"] == "missing"
 
 
+def test_battery_brand_prefix_is_not_treated_as_exact_match():
+    items = [{"brand": "DemoBrand", "category": "汽车启动电池", "category_class": "启动电池"}]
+    result = compare_battery_categories(items, [{"品类明细": [
+        {"品牌": "DemoBrand Plus", "电池类别": "Starterbatterie"},
+    ]}])
+    assert result["status"] == "missing"
+
+
 def test_battery_extra_types_are_returned_separately():
     items = [{"brand": "DemoBrand", "category": "汽车启动电池", "category_class": "启动电池"}]
     result = compare_battery_categories(items, [{"品类明细": [

@@ -135,6 +135,15 @@ def test_weee_brand_and_category_cannot_be_cross_paired_between_rows():
     assert result["status"] == "missing"
 
 
+def test_weee_brand_prefix_is_not_treated_as_exact_match():
+    mail_items = [{"brand": "Brand", "category": "手机", "category_class": "6",
+                   "category_class_status": "matched"}]
+    result = compare_weee_categories(mail_items, [{"品类明细": [
+        {"品牌": "Brand-Other", "品类": "小型信息和电信设备"},
+    ]}])
+    assert result["status"] == "missing"
+
+
 def test_weee_multiple_pairs_are_order_independent_and_extras_are_reported():
     mail_items = [
         {"brand": "BrandA", "category": "手机", "category_class": "6", "category_class_status": "matched"},

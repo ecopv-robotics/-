@@ -1203,12 +1203,10 @@ def compare_weee_categories(items: Any, workorders: Iterable[Dict[str, Any]] = (
                 continue
             pair_brand = _norm(brand)
             order_brand = _norm(pair["brand"])
-            brand_hit = bool(pair_brand and order_brand and (
-                pair_brand == order_brand or pair_brand in order_brand or order_brand in pair_brand))
+            brand_hit = bool(pair_brand and order_brand and pair_brand == order_brand)
             pair_category = _norm(pair["category"])
             mail_category = _norm(category)
-            category_hit = bool(pair_category and mail_category and (
-                pair_category == mail_category or pair_category in mail_category or mail_category in pair_category))
+            category_hit = bool(pair_category and mail_category and pair_category == mail_category)
             if mail_class:
                 order_classification = classify_weee_product(pair["category"])
                 order_class = order_classification.get("category_class") if order_classification.get("status") == "matched" else ""

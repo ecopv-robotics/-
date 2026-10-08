@@ -232,10 +232,11 @@ def test_german_workorder_export_requires_completed_special_audit():
         "匹配状态": "精确匹配",
         "RPA查询状态": "实时查询",
     }
-    pending = {**base, "德国WEEE品类核对": '{"status":"pending","reason":"字段不清楚"}'}
-    assert ExcelWriter._workorder_success_and_reason(pending, "queried") == (
-        "否", "德国WEEE品类核验待复核：字段不清楚"
-    )
+    pending = {**base, "德国WEEE品类核对": '{"status":"pending","reason":"字段不清楚",'
+                                               '"extra_items":[{"brand":"Other","category":"第5类"}]}'}
+    pending_success, pending_reason = ExcelWriter._workorder_success_and_reason(pending, "queried")
+    assert pending_success == "否"
+    assert "字段不清楚" in pending_reason and "额外品类" in pending_reason
     missing = {**base, "德国WEEE品类核对": '{"status":"missing","reason":"类别缺失"}'}
     assert ExcelWriter._workorder_success_and_reason(missing, "queried") == (
         "否", "德国WEEE品类核验缺项/不符：类别缺失"
