@@ -415,6 +415,9 @@ class WorkerThread(QThread):
 
     def run(self):
         try:
+            if self.mode in {"stage2", "all"}:
+                from modules.workorder_checker import validate_workorder_url
+                validate_workorder_url((self.config.get("workorder") or {}).get("url"))
             if self.mode == "stage2":
                 self._run_stage2()
             elif self.mode == "stage1":
@@ -616,6 +619,7 @@ class WorkerThread(QThread):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         processed_rows = []
+        login_failed = False
         try:
             login_ok = loop.run_until_complete(
                 checker._await_or_cancel(checker.login(), False)
@@ -625,6 +629,7 @@ class WorkerThread(QThread):
                 return
             if not login_ok:
                 logger.error("工单系统登录失败，跳过RPA比对")
+                login_failed = True
                 for r in to_query:
                     r["是否已录单"] = "未比对"
                     r["匹配状态"] = "工单系统未连接"
@@ -660,13 +665,25 @@ class WorkerThread(QThread):
         _ingest_workbench_database(processed_rows, "workorder", primary, logger)
         _ack_workorder_retry_queue(processed_rows, logger)
         pending_count = max(0, len(to_query) - len(processed_rows))
+        queried_count = sum(
+            1 for row in processed_rows
+            if str(row.get("RPA查询状态") or "").strip() not in {
+                "登录失败", "查询未执行", "查询异常", "查询条件填写失败",
+                "查询按钮失败", "结果表解析失败",
+            }
+        )
         logger.info(
-            f"阶段二实际处理: {len(processed_rows)}/{len(to_query)} 条"
+            f"阶段二结果行已生成: {len(processed_rows)} 条；"
+            f"实际进入查询流程: {queried_count}/{len(to_query)} 条"
         )
         if pending_count:
             logger.warning(f"阶段二未执行 {pending_count} 条，结果表已标记为“未执行”")
+        if login_failed:
+            self.error_signal.emit("工单系统登录失败，结果文件仅记录未比对状态；没有完成工单核对")
         logger.info("=" * 50)
-        logger.info(f"[阶段二完成] 工单核对结果: {primary}")
+        logger.info(
+            f"[阶段二{'未完成' if login_failed else '完成'}] 工单核对结果: {primary}"
+        )
 
         self.finished_signal.emit(primary, secondary)
 

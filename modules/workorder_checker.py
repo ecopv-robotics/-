@@ -24,7 +24,7 @@ import re
 import time
 from datetime import date as date_type, datetime, timedelta
 from typing import Callable, List, Dict, Optional, Tuple
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from utils.fuzzy_match import fuzzy_match_pair, normalize_text, to_simplified
 from modules.weee_category_audit import compare_weee_categories
@@ -32,6 +32,23 @@ from modules.battery_review import compare_battery_categories, is_german_battery
 
 
 REGISTRATION_ORDER_PATH = "/work/workOrderRegister"
+
+
+def validate_workorder_url(value: str) -> str:
+    """拒绝缺失或示例域名，避免把未连接工单系统报告成已核对。"""
+    raw = str(value or "").strip()
+    parsed = urlsplit(raw)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not hostname
+        or parsed.username
+        or parsed.password
+        or hostname.endswith(".invalid")
+        or hostname in {"example.com", "example.org", "example.net"}
+    ):
+        raise ValueError("工单系统网址未配置为有效地址，请检查本机配置")
+    return raw
 
 # 邮件中的代理名称偶尔会出现同音/形近字，而工单平台只接受下拉框中的
 # 正式名称。这个映射只用于网页查询，不改写阶段一输出中的原始字段，
@@ -790,6 +807,7 @@ class WorkOrderChecker:
     async def login(self) -> bool:
         if self._logged_in:
             return True
+        self.url = validate_workorder_url(self.url)
         await self._ensure_browser()
         try:
             self._log(f"导航到工单系统: {self.url}")

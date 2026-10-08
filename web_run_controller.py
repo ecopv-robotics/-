@@ -12,10 +12,11 @@ import zipfile
 from collections import deque
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 
-BUILD = "2026.09.30-r11"
+BUILD = "2026.10.08-r1"
 UPLOAD_LIMIT = 20 * 1024 * 1024
 ROLES = {
     "agent": ("agent_table_path", "agent_emails", "data/agent_emails.xlsx"),
@@ -205,6 +206,7 @@ class RunController:
                     "logs": logs,
                     "credentials": {"email_address": email.get("address", ""),
                                     "email_password_set": bool(email.get("password")),
+                                    "workorder_url": workorder.get("url", ""),
                                     "workorder_username": workorder.get("username", ""),
                                     "workorder_password_set": bool(workorder.get("password"))},
                     "imports": {key: path.name for key, path in self.imports.items()},
@@ -259,6 +261,7 @@ class RunController:
             config = self._read_config()
             for key, section, field in (("email_address", "email", "address"),
                                         ("email_password", "email", "password"),
+                                        ("workorder_url", "workorder", "url"),
                                         ("workorder_username", "workorder", "username"),
                                         ("workorder_password", "workorder", "password")):
                 value = payload.get(key)
@@ -268,6 +271,14 @@ class RunController:
                     raise ValueError("账号配置格式不正确")
                 if field == "password" and not value:
                     continue  # Blank means retain, never silently clear an existing password.
+                if field == "url" and value.strip():
+                    parsed = urlsplit(value.strip())
+                    host = (parsed.hostname or "").lower().rstrip(".")
+                    if (parsed.scheme not in {"http", "https"} or not host
+                            or parsed.username or parsed.password
+                            or host.endswith(".invalid")
+                            or host in {"example.com", "example.org", "example.net"}):
+                        raise ValueError("请输入可访问的工单系统网址（http 或 https）")
                 config.setdefault(section, {})[field] = value.strip() if field != "password" else value
             atomic_text(self.config_path, yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
             self.config = config
@@ -370,6 +381,15 @@ class RunController:
                 validate_workbook(stage2.read_bytes(), "stage2")
             config = self._runtime_config()
             required = ["email"] if mode == "stage1" else ["workorder"] if mode == "stage2" else ["email", "workorder"]
+            if "workorder" in required:
+                workorder_url = str(config.get("workorder", {}).get("url") or "").strip()
+                parsed = urlsplit(workorder_url)
+                host = (parsed.hostname or "").lower().rstrip(".")
+                if (parsed.scheme not in {"http", "https"} or not host
+                        or parsed.username or parsed.password
+                        or host.endswith(".invalid")
+                        or host in {"example.com", "example.org", "example.net"}):
+                    raise ValueError("工单系统网址仍为占位值或格式无效，请先在账号配置中填写实际网址")
             for section in required:
                 account = "address" if section == "email" else "username"
                 if not config.get(section, {}).get(account) or not config.get(section, {}).get("password"):
@@ -421,7 +441,8 @@ class RunController:
         with self.lock:
             try:
                 self._bind_results(primary, secondary, mode)
-                self.status, self.message = "finishing", "结果已生成，正在收尾"
+                if self.status != "error":
+                    self.status, self.message = "finishing", "结果已生成，正在收尾"
             except Exception as exc:
                 self._error(exc)
 
