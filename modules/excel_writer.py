@@ -767,10 +767,74 @@ class ExcelWriter:
         return "否", query_error or skip_reason or match_status or rpa_status or "核对结果未明确"
 
     @classmethod
+    def _workorder_german_classification(cls, category: str, category_value: str,
+                                         class_value: str) -> str:
+        """Return the requested display value for German WEEE or battery law."""
+        source = f"{category_value} {class_value}".strip()
+        if category == "德国电池法":
+            # Battery law uses battery type, never a WEEE numbered class.
+            battery_types = (
+                "轻型交通工具电池",
+                "工业电池",
+                "启动电池",
+                "汽车电池",
+                "设备电池",
+            )
+            return next((label for label in battery_types if label in source), "无")
+
+        if category == "德国WEEE":
+            # Prefer an explicit class in the evidence, accepting both Chinese
+            # and Arabic numerals and retaining real classes beyond five.
+            chinese_numbers = {
+                "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+                "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+            }
+            ordinal_names = {value: key for key, value in chinese_numbers.items()}
+            import re
+            match = re.search(r"第\s*([一二三四五六七八九十\d]+)\s*类", source)
+            if match:
+                number = match.group(1)
+                normalized = chinese_numbers.get(number)
+                if normalized is None and number.isdigit():
+                    normalized = int(number)
+                if normalized is not None:
+                    ordinal = ordinal_names.get(normalized, str(normalized))
+                    return f"第{ordinal}类"
+
+            compact_source = source.casefold().replace(" ", "")
+            if any(token in compact_source for token in (
+                "小型it", "信息和电信", "信息与电信", "通讯设备", "通信设备",
+                "informationandtelecommunication", "itandtelecommunication",
+                "telecomequipment", "telecommunicationequipment",
+            )):
+                return "第六类"
+            if any(token in compact_source for token in (
+                "小型设备", "小型电子电气设备", "kleingeräte", "small equipment",
+            )):
+                return "第五类"
+            return "无"
+
+        return class_value or category_value or "无"
+
+    @staticmethod
+    def _workorder_agent_display(value: str) -> str:
+        """Use the short, familiar agent label for Shenzhen Huazhixing."""
+        text = str(value or "").strip()
+        normalized = text.replace(" ", "").replace("（", "(").replace("）", ")")
+        if any(alias in normalized for alias in (
+            "深圳华之星检测公司",
+            "深圳市华之星检测公司",
+            "深圳华之星检测有限公司",
+            "深圳市华之星检测有限公司",
+        )):
+            return "华之星"
+        return text
+
+    @classmethod
     def _workorder_export_values(cls, row: Dict, state: str) -> List[List[str]]:
         project = str(row.get("项目") or row.get("标准化项目名称") or "").strip()
         request = str(row.get("需求") or "").strip()
-        agent = str(row.get("代理") or "").strip()
+        agent = cls._workorder_agent_display(row.get("代理") or "")
         company = str(row.get("客户") or row.get("客户公司名称") or "").strip()
         success, failure_reason = cls._workorder_success_and_reason(row, state)
         outputs = []
@@ -788,24 +852,9 @@ class ExcelWriter:
                 class_value = str(
                     item.get("category_class_name") or item.get("category_class") or ""
                 ).strip()
-                if category == "德国电池法":
-                    classification_source = f"{category_value} {class_value}"
-                    numbered_class = next(
-                        (
-                            label
-                            for label in ("第一类", "第二类", "第三类", "第四类", "第五类")
-                            if label in classification_source
-                        ),
-                        "",
-                    )
-                    if numbered_class:
-                        german_classes.append(numbered_class)
-                    elif "设备电池" in classification_source:
-                        german_classes.append("设备电池")
-                    else:
-                        german_classes.append(class_value or category_value)
-                else:
-                    german_classes.append(class_value or category_value)
+                german_classes.append(
+                    cls._workorder_german_classification(category, category_value, class_value)
+                )
 
             business = business_project
             if request:
