@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
-BUILD = "2026.10.08-r1"
+BUILD = "2026.10.08-r2"
 UPLOAD_LIMIT = 20 * 1024 * 1024
 ROLES = {
     "agent": ("agent_table_path", "agent_emails", "data/agent_emails.xlsx"),
@@ -138,6 +138,9 @@ class DesktopWorkerAdapter:
                              ("finished_signal", "result"), ("error_signal", "error"),
                              ("cancelled_signal", "cancelled")):
             getattr(self.worker, signal).connect(callbacks[name], type=Qt.DirectConnection)
+        partial_signal = getattr(self.worker, "partial_signal", None)
+        if partial_signal is not None:
+            partial_signal.connect(callbacks["partial"], type=Qt.DirectConnection)
 
     def start(self):
         self.worker.start()
@@ -460,7 +463,8 @@ class RunController:
                           stage2_input_path=str(stage2) if stage2 else None)
             callbacks = {"log": self.log, "progress": self._progress, "error": self._error,
                          "result": lambda a, b: self._result(a, b, mode),
-                         "cancelled": self._cancelled, "done": self._done}
+                         "cancelled": self._cancelled, "partial": self._partial,
+                         "done": self._done}
             try:
                 self.worker = self.worker_factory(kwargs, callbacks)
                 self.worker.start()
@@ -484,11 +488,15 @@ class RunController:
             self.status, self.message = "stopped", self._redact(message)
             self.log(self.message)
 
+    def _partial(self, message):
+        with self.lock:
+            self.status, self.message = "partial", self._redact(message)
+
     def _result(self, primary, secondary, mode):
         with self.lock:
             try:
                 self._bind_results(primary, secondary, mode)
-                if self.status != "error":
+                if self.status not in {"error", "partial"}:
                     self.status, self.message = "finishing", "结果已生成，正在收尾"
             except Exception as exc:
                 self._error(exc)
@@ -497,7 +505,7 @@ class RunController:
         with self.lock:
             if self.status == "finishing":
                 self.status, self.message = "completed", "运行完成，可下载结果或进入人工复核"
-            elif self.status not in {"error", "stopped"}:
+            elif self.status not in {"error", "stopped", "partial"}:
                 self.status, self.message = "error", "任务已退出但未生成结果，请查看运行日志"
             self.busy = False
             self.log(self.message)

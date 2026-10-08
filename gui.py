@@ -377,6 +377,49 @@ def _cache_internal_email_table(source_path: str, cache_path: str = INTERNAL_EMA
     return cache_path
 
 
+_STAGE2_SUCCESS_STATUSES = {"实时查询", "缓存复用", "缓存复用-已展示"}
+_STAGE2_DUPLICATE_SKIP = "代理-公司-项目重复, 与前条合并查询"
+
+
+def _stage2_partial_message(rows_to_query, skipped_rows, *, require_query=False,
+                            login_failed=False, query_exception=False):
+    """只有每个唯一查询项均有有效查询结果、且无前置拦截时才算阶段二完成。"""
+    total = len(rows_to_query)
+    successful = sum(
+        1 for row in rows_to_query
+        if str(row.get("RPA查询状态") or "").strip() in _STAGE2_SUCCESS_STATUSES
+    )
+    unresolved = max(0, total - successful)
+    blocking_skips = [
+        row for row in skipped_rows
+        if str(row.get("_skip_reason") or "").strip() != _STAGE2_DUPLICATE_SKIP
+    ]
+    duplicate_skips = max(0, len(skipped_rows) - len(blocking_skips))
+
+    if total == 0 and not skipped_rows and not require_query:
+        return ""
+    if total == 0 and require_query:
+        return "阶段二未完成：没有可进入工单查询的已确认明细。结果文件已生成，请检查输入文件和确认状态。"
+    if not unresolved and not blocking_skips and not login_failed and not query_exception:
+        return ""
+
+    details = [f"唯一查询项有效完成 {successful}/{total} 条"]
+    if unresolved:
+        details.append(f"未完成查询 {unresolved} 条")
+    if blocking_skips:
+        details.append(f"前置校验拦截 {len(blocking_skips)} 条")
+    if duplicate_skips:
+        details.append(f"重复组合已合并查询 {duplicate_skips} 条")
+    if login_failed:
+        details.append("工单系统登录失败")
+    if query_exception:
+        details.append("查询过程中发生异常")
+    return (
+        "阶段二部分完成：" + "；".join(details)
+        + "。结果文件已保存，但不能视为全部核对完成。"
+    )
+
+
 class WorkerThread(QThread):
     """后台处理线程 — 支持独立运行 stage1(邮件解析) / stage2(工单查询) / all(全流程)"""
     log_signal = pyqtSignal(str)
@@ -384,6 +427,7 @@ class WorkerThread(QThread):
     finished_signal = pyqtSignal(str, str)  # primary_file, secondary_file
     cancelled_signal = pyqtSignal(str)
     error_signal = pyqtSignal(str)
+    partial_signal = pyqtSignal(str)
 
     def __init__(self, config, mode="all", date_from=None, date_to=None,
                  agent_email_path=None, internal_email_path=None, project_table_path=None,
@@ -607,6 +651,12 @@ class WorkerThread(QThread):
             )
             primary, secondary = writer.write_workorder_check_result(all_rows, [], skipped)
             _ingest_workbench_database(all_rows, "workorder", primary, logger)
+            partial_message = _stage2_partial_message(
+                to_query, skipped, require_query=True
+            )
+            if partial_message:
+                logger.warning(partial_message)
+                self.partial_signal.emit(partial_message)
             self.finished_signal.emit(primary, secondary)
             return
 
@@ -620,6 +670,7 @@ class WorkerThread(QThread):
         asyncio.set_event_loop(loop)
         processed_rows = []
         login_failed = False
+        query_exception = False
         try:
             login_ok = loop.run_until_complete(
                 checker._await_or_cancel(checker.login(), False)
@@ -641,6 +692,7 @@ class WorkerThread(QThread):
                     processed_rows = loop.run_until_complete(checker.search_batch(to_query)) or []
                 except Exception as e:
                     logger.error(f"RPA查询异常: {e}", "error")
+                    query_exception = True
                     processed_rows = list(getattr(checker, "last_processed_rows", []))
                 if self._stop:
                     logger.warning("用户已停止阶段二，未生成不完整的工单核对结果文件")
@@ -666,11 +718,8 @@ class WorkerThread(QThread):
         _ack_workorder_retry_queue(processed_rows, logger)
         pending_count = max(0, len(to_query) - len(processed_rows))
         queried_count = sum(
-            1 for row in processed_rows
-            if str(row.get("RPA查询状态") or "").strip() not in {
-                "登录失败", "查询未执行", "查询异常", "查询条件填写失败",
-                "查询按钮失败", "结果表解析失败",
-            }
+            1 for row in to_query
+            if str(row.get("RPA查询状态") or "").strip() in _STAGE2_SUCCESS_STATUSES
         )
         logger.info(
             f"阶段二结果行已生成: {len(processed_rows)} 条；"
@@ -678,11 +727,16 @@ class WorkerThread(QThread):
         )
         if pending_count:
             logger.warning(f"阶段二未执行 {pending_count} 条，结果表已标记为“未执行”")
-        if login_failed:
-            self.error_signal.emit("工单系统登录失败，结果文件仅记录未比对状态；没有完成工单核对")
+        partial_message = _stage2_partial_message(
+            to_query, skipped, require_query=True, login_failed=login_failed,
+            query_exception=query_exception,
+        )
+        if partial_message:
+            logger.warning(partial_message)
+            self.partial_signal.emit(partial_message)
         logger.info("=" * 50)
         logger.info(
-            f"[阶段二{'未完成' if login_failed else '完成'}] 工单核对结果: {primary}"
+            f"[阶段二{'部分完成' if partial_message else '完成'}] 工单核对结果: {primary}"
         )
 
         self.finished_signal.emit(primary, secondary)
@@ -717,6 +771,8 @@ class WorkerThread(QThread):
         _apply_workorder_retry_queue(to_query, logger)
         logger.info(f"前置校验: 待RPA {len(to_query)} 条, 跳过 {len(skipped)} 条")
 
+        login_failed = False
+        query_exception = False
         checker = WorkOrderChecker(
             self.config["workorder"], logger,
             cancel_requested=self.is_stop_requested,
@@ -732,9 +788,11 @@ class WorkerThread(QThread):
                 return
             if not login_ok:
                 logger.warning("工单系统登录失败")
+                login_failed = True
                 for r in all_rows:
                     r["是否已录单"] = "未比对"
                     r["匹配状态"] = "工单系统未连接"
+                    r["RPA查询状态"] = "登录失败"
                     r["查询时间戳"] = datetime.now().isoformat(timespec="seconds")
             else:
                 try:
@@ -757,6 +815,7 @@ class WorkerThread(QThread):
                             r["邮件日期筛选范围"] = q.get("邮件日期筛选范围", "")
                             r["日期筛选说明"] = q.get("日期筛选说明", "")
                 except Exception as e:
+                    query_exception = True
                     logger.error(f"RPA查询异常: {e}", "error")
         finally:
             try:
@@ -781,8 +840,17 @@ class WorkerThread(QThread):
         # 一站式模式也要把阶段二结论增量写入工作台数据库；否则自动重查
         # 后的结果只能留在本次 Excel，工作台刷新时无法与人工覆盖层统一。
         _ingest_workbench_database(all_rows, "workorder", primary, logger)
+        partial_message = _stage2_partial_message(
+            to_query, skipped, login_failed=login_failed,
+            query_exception=query_exception,
+        )
+        if partial_message:
+            logger.warning(partial_message)
+            self.partial_signal.emit(partial_message)
         logger.info("=" * 50)
-        logger.info(f"[一站式完成] 漏单清单: {primary}")
+        logger.info(
+            f"[一站式{'阶段二部分完成' if partial_message else '完成'}] 漏单清单: {primary}"
+        )
         logger.info(f"[一站式完成] 过滤清单: {secondary}")
         self.finished_signal.emit(primary, secondary)
 
@@ -2502,12 +2570,14 @@ class MainWindow(QMainWindow):
             project_table_path=project_path,
             stage2_input_path=stage2_in,
         )
+        self._run_partial_message = ""
         self.save_session()
         self.worker.log_signal.connect(self.log)
         self.worker.progress_signal.connect(self.on_progress)
         self.worker.finished_signal.connect(self.on_finished)
         self.worker.cancelled_signal.connect(self.on_cancelled)
         self.worker.error_signal.connect(self.on_error)
+        self.worker.partial_signal.connect(self.on_partial)
         self.worker.start()
 
         self.btn_run.setEnabled(False)
@@ -2564,9 +2634,10 @@ class MainWindow(QMainWindow):
             self.log("提示：人工复核工作台请使用‘仅阶段一（邮件解析）’运行，确认后再进入阶段二。")
         self.btn_run.setEnabled(True)
         self.btn_stop.setEnabled(False)
-        self.progress.setFormat("完成")
+        is_partial = bool(getattr(self, "_run_partial_message", ""))
+        self.progress.setFormat("部分完成，需补查" if is_partial else "完成")
         self.log("=" * 50)
-        self.log("运行完成!")
+        self.log("运行结束：部分完成，不能视为全部核对完成。" if is_partial else "运行完成!")
         if self.radio_stage2.isChecked():
             self.log(f"  工单核对结果: {self.stage2_result_file}")
         else:
@@ -2578,6 +2649,10 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(False)
         self.log(f"[ERROR] {error_msg}")
         QMessageBox.critical(self, "运行错误", error_msg)
+
+    def on_partial(self, message):
+        """保留已生成的结果，但明确提示本批仍有未核对项。"""
+        self._run_partial_message = str(message or "阶段二未全部完成")
 
     def on_cancelled(self, message):
         """停止后恢复界面；不把未完成的 RPA 查询伪装成“运行完成”。"""

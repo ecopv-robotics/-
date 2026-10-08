@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   let state=null,csrf='',cursor=0,initial=true,connected=false,pending=false,exiting=false;
   let logLines=[],catalogKey='',resultKey='',polling=false;
-  const labels={idle:'就绪',running:'运行中',stopping:'正在停止',finishing:'正在收尾',completed:'已完成',stopped:'已停止',error:'需要处理'};
+  const labels={idle:'就绪',running:'运行中',stopping:'正在停止',finishing:'正在收尾',completed:'已完成',partial:'部分完成 · 需补查',stopped:'已停止',error:'需要处理'};
   function notice(message,error=false){$('notice').textContent=message;$('notice').classList.toggle('error',error);$('notice').hidden=false;}
   function availability(){
     const blocked=!connected||pending||!!state?.busy||exiting;
@@ -45,7 +45,7 @@
     $('wo-password').placeholder=data.credentials.workorder_password_set?'已配置，留空保持不变':'尚未配置，请填写';
     for(const role of ['agent','internal','project'])$('file-'+role).textContent=data.imports[role]||'尚未导入';
     $('status').textContent=labels[data.status]||data.status;$('status').className='badge '+data.status;$('message').textContent=data.message;
-    const[current,total]=data.progress;$('progress').value=total>0?Math.min(100,current/total*100):data.status==='completed'?100:0;
+    const[current,total]=data.progress;$('progress').value=total>0?Math.min(100,current/total*100):['completed','partial'].includes(data.status)?100:0;
     $('progress-text').textContent=total>0?`已处理 ${current} / ${total}`:data.busy?'正在执行，详细进度见下方日志':data.status==='idle'?'未开始':labels[data.status];
     if(data.logs.length){logLines.push(...data.logs.map(item=>item.text));logLines=logLines.slice(-2000);
       const log=$('log'),top=log.scrollTop;log.textContent=logLines.join('\n');log.scrollTop=$('follow').checked?log.scrollHeight:top;}
