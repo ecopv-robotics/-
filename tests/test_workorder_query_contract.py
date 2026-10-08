@@ -20,6 +20,81 @@ def make_checker():
     return checker
 
 
+class FakeQueryButton:
+    def __init__(self):
+        self.clicks = 0
+
+    async def click(self, **_kwargs):
+        self.clicks += 1
+
+
+class FakeResponseContext:
+    def __init__(self, response=None, timeout_after_click=False):
+        self.response = response
+        self.timeout_after_click = timeout_after_click
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        if self.timeout_after_click:
+            raise TimeoutError("no query response")
+
+    @property
+    def value(self):
+        async def result():
+            return self.response
+        return result()
+
+
+class FakeQueryPage:
+    def __init__(self, button, response=None, timeout_after_click=False):
+        self.button = button
+        self.response = response
+        self.timeout_after_click = timeout_after_click
+
+    async def wait_for_selector(self, _selector, **_kwargs):
+        return self.button
+
+    def expect_response(self, predicate, **_kwargs):
+        if self.response is not None:
+            assert predicate(self.response)
+        return FakeResponseContext(self.response, self.timeout_after_click)
+
+    async def wait_for_load_state(self, *_args, **_kwargs):
+        return None
+
+
+def test_query_button_click_uses_python_playwright_response_context():
+    checker = make_checker()
+    checker._expected_query_date_window = ("2026-07-26", "2026-09-26")
+    button = FakeQueryButton()
+    response = SimpleNamespace(
+        status=200,
+        url="https://example.invalid/orderRegister/queryPageList",
+        request=SimpleNamespace(
+            post_data="orderDateBegin=2026-07-26&orderDateEnd=2026-09-26"
+        ),
+    )
+    checker._page = FakeQueryPage(button, response)
+    checker._log = lambda *_args, **_kwargs: None
+
+    assert asyncio.run(checker._click_query_button()) is True
+    assert button.clicks == checker._query_click_count == 1
+    assert checker._last_query_response_status == "ok"
+
+
+def test_query_button_does_not_retry_when_response_times_out_after_click():
+    checker = make_checker()
+    button = FakeQueryButton()
+    checker._page = FakeQueryPage(button, timeout_after_click=True)
+    checker._log = lambda *_args, **_kwargs: None
+
+    assert asyncio.run(checker._click_query_button()) is True
+    assert button.clicks == checker._query_click_count == 1
+    assert checker._last_query_response_status == "unconfirmed"
+
+
 def configure_batch_runtime(checker, search_one):
     checker._cancel_requested = None
     checker.cancelled = False
