@@ -1863,8 +1863,10 @@ class MainWindow(QMainWindow):
         self.btn_refresh_stage2_inputs.setVisible(False)
         self.btn_choose_stage2_input.setVisible(False)
         self.stage2_input_label.setVisible(False)
-        self.chk_force_live = QCheckBox("强制实时查询（忽略缓存）")
-        self.chk_force_live.setToolTip("仍使用阶段一待查名单，但每条都会实际填写并点击网页查询")
+        self.chk_force_live = QCheckBox("逐条实时查询（不使用缓存）")
+        self.chk_force_live.setChecked(True)
+        self.chk_force_live.setEnabled(False)
+        self.chk_force_live.setToolTip("阶段二每条有效业务记录都会实际填写条件并点击工单系统查询")
         stage2_layout.addWidget(self.chk_force_live)
         ctrl_layout.addWidget(self.stage2_panel)
         self.stage2_panel.setVisible(False)
@@ -2158,7 +2160,7 @@ class MainWindow(QMainWindow):
             self.refresh_stage2_input_options(
                 preferred_path=(stage2_in if self.stage2_input_user_selected else None)
             )
-            self.chk_force_live.setChecked(bool(state.get("force_live_query", False)))
+            self.chk_force_live.setChecked(True)
             # 恢复运行模式
             mode = state.get("mode", "all")
             if mode == "stage1":
@@ -2534,7 +2536,7 @@ class MainWindow(QMainWindow):
         self.config.setdefault("workorder", {})
         self.config["workorder"]["username"] = self.input_wo_user.text().strip()
         self.config["workorder"]["password"] = self.input_wo_pwd.text().strip()
-        self.config["workorder"]["force_live_query"] = self.chk_force_live.isChecked()
+        self.config["workorder"]["force_live_query"] = True
 
         # 仅 stage1/all 需要时间范围
         if mode != "stage2":

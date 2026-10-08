@@ -252,56 +252,121 @@ def normalize_battery_items(raw_items, previous_items=(), confirm_id="", delete_
 
 
 def compare_battery_categories(items, workorders):
-    """Compare confirmed battery classes with the matching order's category tab."""
+    """Compare each brand + battery type against the same category-detail row."""
     if isinstance(items, str):
         try:
             items = json.loads(items)
         except (TypeError, ValueError):
             items = []
     mail_items = [item for item in (items or []) if isinstance(item, dict)]
-    order_categories, order_brands = [], []
-    for order in workorders or []:
-        if not isinstance(order, dict):
-            continue
-        category_rows = order.get("品类明细") or []
-        if not isinstance(category_rows, list):
-            category_rows = []
-        for row in category_rows:
-            if not isinstance(row, dict):
-                continue
-            for key, value in row.items():
-                label = str(key).casefold()
-                if any(word in label for word in ("品类", "类别", "分类", "电池类型", "category", "battery type", "batteriekategorie")):
-                    category = _clean(value)
-                    if category:
-                        order_categories.append(category)
-                if any(word in label for word in ("品牌", "brand", "marke")):
-                    brand = _clean(value)
-                    if brand:
-                        order_brands.append(brand)
-    checked = []
+    orders = [order for order in (workorders or []) if isinstance(order, dict)]
+    if not mail_items:
+        return {"enabled": False, "status": "pending", "reason": "邮件未提取到明确品牌/电池类型",
+                "items": [], "extra_items": [], "workorder_count": len(orders)}
+    if not orders:
+        checked = [{**item, "status": "missing", "reason": "实时工单列表未找到对应工单"}
+                   for item in mail_items]
+        return {"enabled": True, "status": "missing", "reason": "实时工单列表未找到对应工单",
+                "items": checked, "extra_items": [], "workorder_count": 0}
+    if len(orders) != 1:
+        checked = [{**item, "status": "pending", "reason": "工单候选不唯一，无法确认品类明细归属"}
+                   for item in mail_items]
+        return {"enabled": True, "status": "pending", "reason": "工单候选不唯一，需人工复核",
+                "items": checked, "extra_items": [], "workorder_count": len(orders)}
+
+    order = orders[0]
+    detail_status = str(order.get("德国电池法品类明细读取状态") or order.get("品类明细读取状态") or "").strip()
+    category_rows = order.get("品类明细") or []
+    if not isinstance(category_rows, list):
+        category_rows = []
+    category_rows = [row for row in category_rows if isinstance(row, dict)]
+    if detail_status in {"failed", "pending", "not_read"}:
+        checked = [{**item, "status": "pending", "reason": "工单品类明细读取失败或不完整"}
+                   for item in mail_items]
+        return {"enabled": True, "status": "pending", "reason": "工单品类明细读取失败或不完整，需人工复核",
+                "items": checked, "extra_items": [], "workorder_count": 1}
+    if detail_status == "loaded_empty":
+        checked = [{**item, "status": "missing", "reason": "工单品类明细已确认为空"}
+                   for item in mail_items]
+        return {"enabled": True, "status": "missing", "reason": "工单品类明细为空，邮件目标电池类型缺失",
+                "items": checked, "extra_items": [], "workorder_count": 1}
+    if not category_rows:
+        checked = [{**item, "status": "pending", "reason": "未确认工单品类明细是否完整"}
+                   for item in mail_items]
+        return {"enabled": True, "status": "pending", "reason": "未确认工单品类明细是否完整，需人工复核",
+                "items": checked, "extra_items": [], "workorder_count": 1}
+
+    brand_words = ("品牌", "brand", "marke")
+    category_words = ("品类", "类别", "分类", "电池类型", "category", "battery type", "batteriekategorie")
+    def has_field(row, words):
+        return any(any(word in str(key).casefold() for word in words) for key in row)
+    if not any(has_field(row, brand_words) for row in category_rows) or not any(
+            has_field(row, category_words) for row in category_rows):
+        checked = [{**item, "status": "pending", "reason": "工单品类明细缺少品牌或电池类型字段"}
+                   for item in mail_items]
+        return {"enabled": True, "status": "pending", "reason": "工单品类明细字段不清楚，需人工复核",
+                "items": checked, "extra_items": [], "workorder_count": 1}
+
+    pairs, order_categories, order_brands = [], [], []
+    for row_index, row in enumerate(category_rows):
+        brands, categories = [], []
+        for key, value in row.items():
+            label = str(key).casefold()
+            if any(word in label for word in brand_words):
+                found = _clean(value)
+                if found:
+                    brands.append(found)
+            if any(word in label for word in category_words):
+                found = _clean(value)
+                if found:
+                    categories.append(found)
+        order_brands.extend(brands)
+        order_categories.extend(categories)
+        for brand in brands:
+            for category in categories:
+                pairs.append({"brand": brand, "category": category, "row_index": row_index,
+                              "category_class": classify_battery_category(category)})
+
+    checked, consumed = [], set()
     for item in mail_items:
         brand = _clean(item.get("brand"))
         category = _clean(item.get("category"))
         category_class = _clean(item.get("category_class")) or classify_battery_category(category)
-        if not category or category_class not in BATTERY_CLASSES:
-            status, reason = "pending", "邮件电池品类尚未确认"
-        elif not order_categories:
-            status, reason = "pending", "工单未返回品类明细"
-        elif not any(_norm(category) == _norm(value) or classify_battery_category(value) == category_class
-                     for value in order_categories):
-            status, reason = "missing", "工单品类明细未找到对应电池类别"
-        elif brand and not order_brands:
-            status, reason = "pending", "工单未返回品牌字段"
-        elif brand and not any(_norm(brand) == _norm(value) for value in order_brands):
-            status, reason = "pending", "电池类别已找到，品牌仍需人工核对"
+        if not brand or category_class not in BATTERY_CLASSES:
+            checked.append({**item, "status": "pending", "reason": "邮件未提取到完整品牌＋电池类型"})
+            continue
+        match_index = None
+        for index, pair in enumerate(pairs):
+            if index in consumed:
+                continue
+            brand_norm = _norm(brand)
+            registered_brand = _norm(pair["brand"])
+            brand_hit = bool(brand_norm and registered_brand and (
+                brand_norm == registered_brand or brand_norm in registered_brand or registered_brand in brand_norm))
+            category_hit = pair["category_class"] == category_class
+            if not category_hit and category:
+                category_hit = _norm(category) == _norm(pair["category"])
+            if brand_hit and category_hit:
+                match_index = index
+                break
+        if match_index is None:
+            checked.append({"brand": brand, "category": category, "category_class": category_class,
+                            "status": "missing", "reason": "工单品类明细中未找到同一行对应的品牌＋电池类型"})
         else:
-            status, reason = "matched", "工单电池类别与品牌已找到"
-        checked.append({"brand": brand, "category": category, "category_class": category_class,
-                        "status": status, "reason": reason})
-    overall = ("missing" if any(item["status"] == "missing" for item in checked)
-               else "pending" if not checked or any(item["status"] == "pending" for item in checked)
-               else "matched")
-    return {"enabled": bool(mail_items), "status": overall, "items": checked,
-            "workorder_categories": list(dict.fromkeys(order_categories)),
-            "workorder_brands": list(dict.fromkeys(order_brands))}
+            consumed.add(match_index)
+            checked.append({"brand": brand, "category": category, "category_class": category_class,
+                            "status": "matched", "reason": "同一条工单品类明细中的品牌与电池类型均匹配"})
+    extra_items = [{"brand": pair["brand"], "category": pair["category"],
+                    "category_class": pair["category_class"]}
+                   for index, pair in enumerate(pairs) if index not in consumed]
+    if any(item["status"] == "missing" for item in checked):
+        overall, reason = "missing", "至少一项邮件目标品牌＋电池类型缺失或不符"
+    elif any(item["status"] == "pending" for item in checked):
+        overall, reason = "pending", "邮件或工单电池字段不完整，需人工复核"
+    else:
+        overall, reason = "matched", "邮件目标品牌＋电池类型全部匹配"
+        if extra_items:
+            reason += f"；工单另有 {len(extra_items)} 项额外电池类型"
+    return {"enabled": True, "status": overall, "reason": reason, "items": checked,
+            "extra_items": extra_items, "workorder_categories": list(dict.fromkeys(order_categories)),
+            "workorder_brands": list(dict.fromkeys(order_brands)), "workorder_count": 1}

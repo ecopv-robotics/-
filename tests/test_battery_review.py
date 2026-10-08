@@ -102,6 +102,26 @@ def test_battery_workorder_category_is_compared_independently():
     assert pending["status"] == "pending"
 
 
+def test_battery_brand_and_type_cannot_be_cross_paired_between_rows():
+    items = [{"brand": "DemoBrand", "category": "汽车启动电池", "category_class": "启动电池"}]
+    result = compare_battery_categories(items, [{"品类明细": [
+        {"品牌": "DemoBrand", "电池类别": "工业电池"},
+        {"品牌": "OtherBrand", "电池类别": "Starterbatterie"},
+    ]}])
+    assert result["status"] == "missing"
+
+
+def test_battery_extra_types_are_returned_separately():
+    items = [{"brand": "DemoBrand", "category": "汽车启动电池", "category_class": "启动电池"}]
+    result = compare_battery_categories(items, [{"品类明细": [
+        {"品牌": "DemoBrand", "电池类别": "Starterbatterie"},
+        {"品牌": "ExtraBrand", "电池类别": "Industriebatterie"},
+    ]}])
+    assert result["status"] == "matched"
+    assert result["extra_items"] == [{"brand": "ExtraBrand", "category": "Industriebatterie",
+                                     "category_class": "工业电池"}]
+
+
 def make_store(tmp_path):
     path = tmp_path / "primary.xlsx"
     workbook = Workbook()

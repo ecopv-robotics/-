@@ -13,7 +13,7 @@
   function modeChanged(){
     const mode=$('mode').value,stage2=mode==='stage2';
     $('dates').hidden=stage2;$('stage1-inputs').hidden=stage2;$('stage2-inputs').hidden=!stage2;
-    $('force-wrap').hidden=mode==='stage1';$('date-from').required=$('date-to').required=!stage2;
+    $('date-from').required=$('date-to').required=!stage2;
     $('start').textContent=stage2?'开始工单核对':mode==='all'?'开始一站式运行':'开始邮件解析';
     $('mode-help').textContent=stage2?'只查询所选文件中符合条件的业务明细。':mode==='all'?'沿用桌面一站式流程：解析后继续查询。需要先人工复核时，请选择阶段一。':'仅处理所选日期范围内的邮件；不会扫描全部邮件。';
   }
@@ -39,7 +39,7 @@
   function render(data){
     state=data;csrf=data.csrf;connected=true;$('build').textContent=data.build;
     if(initial){const saved=data.session;$('mode').value=['stage1','stage2','all'].includes(saved.mode)?saved.mode:'stage1';
-      $('date-from').value=saved.date_from;$('date-to').value=saved.date_to;$('force-live').checked=saved.force_live_query;
+      $('date-from').value=saved.date_from;$('date-to').value=saved.date_to;
       $('email-address').value=data.credentials.email_address;$('workorder-url').value=data.credentials.workorder_url||'';$('wo-user').value=data.credentials.workorder_username;modeChanged();initial=false;}
     $('email-password').placeholder=data.credentials.email_password_set?'已配置，留空保持不变':'尚未配置，请填写';
     $('wo-password').placeholder=data.credentials.workorder_password_set?'已配置，留空保持不变':'尚未配置，请填写';
@@ -64,7 +64,7 @@
     finally{clearTimeout(timer);polling=false;}
   }
   $('mode').addEventListener('change',modeChanged);
-  $('run-form').addEventListener('submit',event=>{event.preventDefault();action(()=>request('start',{mode:$('mode').value,date_from:$('date-from').value,date_to:$('date-to').value,input_token:$('stage2-file').value,force_live_query:$('force-live').checked}));});
+  $('run-form').addEventListener('submit',event=>{event.preventDefault();action(()=>request('start',{mode:$('mode').value,date_from:$('date-from').value,date_to:$('date-to').value,input_token:$('stage2-file').value,force_live_query:true}));});
   $('stop').addEventListener('click',()=>action(()=>request('stop')));
   $('settings-form').addEventListener('submit',event=>{event.preventDefault();action(async()=>{const result=await request('settings',{email_address:$('email-address').value,email_password:$('email-password').value,workorder_url:$('workorder-url').value,workorder_username:$('wo-user').value,workorder_password:$('wo-password').value});$('email-password').value=$('wo-password').value='';return result;});});
   document.querySelectorAll('input[data-role]').forEach(input=>input.addEventListener('change',()=>{const file=input.files[0];if(!file)return;

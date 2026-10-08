@@ -176,9 +176,11 @@ def test_upload_rejects_invalid_file_and_paths_do_not_escape(controller):
         controller.download("../../config.yaml")
 
 
-def test_stage2_uses_selected_file_and_force_flag(controller):
+@pytest.mark.parametrize("submitted_force", [True, False])
+def test_stage2_always_forces_live_query_regardless_of_old_setting(controller, submitted_force):
+    controller.config["workorder"]["url"] = "http://workorder.test"
     uploaded = controller.upload("stage2", "reviewed.xlsx", workbook_bytes())
-    controller.start({"mode": "stage2", "input_token": uploaded["file"]["token"], "force_live_query": True})
+    controller.start({"mode": "stage2", "input_token": uploaded["file"]["token"], "force_live_query": submitted_force})
     args = controller.worker.kwargs
     assert args["date_from"] is None and args["date_to"] is None
     assert args["config"]["workorder"]["force_live_query"]
@@ -215,7 +217,7 @@ def http_server(controller):
 def test_http_origin_token_html_and_download(http_server):
     controller, _, url = http_server
     with urlopen(url + "/run") as response:
-        assert b"2026.09.30-r7" in response.read()
+        assert b"2026.10.08-r4" in response.read()
     with urlopen(url + "/api/run/state") as response:
         state = json.load(response)
     assert state["csrf"] == controller.csrf

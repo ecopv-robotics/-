@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
-BUILD = "2026.10.08-r3"
+BUILD = "2026.10.08-r4"
 UPLOAD_LIMIT = 20 * 1024 * 1024
 ROLES = {
     "agent": ("agent_table_path", "agent_emails", "data/agent_emails.xlsx"),
@@ -180,7 +180,7 @@ class RunController:
             "mode": previous.get("mode", "stage1"),
             "date_from": previous.get("date_from") or (date.today() - timedelta(days=30)).isoformat(),
             "date_to": previous.get("date_to") or date.today().isoformat(),
-            "force_live_query": bool(previous.get("force_live_query", False)),
+            "force_live_query": True,
         }
         self.imports = {}
         for role, (session_key, config_key, fallback) in ROLES.items():
@@ -444,7 +444,8 @@ class RunController:
                 account = "address" if section == "email" else "username"
                 if not config.get(section, {}).get(account) or not config.get(section, {}).get("password"):
                     raise ValueError("请先填写并保存邮箱/工单账号及密码")
-            config.setdefault("workorder", {})["force_live_query"] = bool(payload.get("force_live_query", False))
+            # 阶段二必须逐条实时查询。忽略旧会话/请求里的关闭状态，避免静默命中缓存。
+            config.setdefault("workorder", {})["force_live_query"] = True
             self.session.update(mode=mode, force_live_query=config["workorder"]["force_live_query"])
             if start:
                 self.session.update(date_from=start.date().isoformat(), date_to=end.date().isoformat())

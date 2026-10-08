@@ -567,6 +567,9 @@ class WorkOrderChecker:
         self.cancelled = False
         self._cancel_notice_logged = False
         self._last_query_status = ""
+        self._query_click_count = 0
+        self._last_category_detail_status = "not_read"
+        self._last_category_detail_note = ""
         # 本条查询的可审计来源。_last_query_status 继续保持兼容（实时查询/缓存复用），
         # 细分结果另存，避免把“模糊命中”误当成查询失败。
         self._last_lookup_mode = "未执行"
@@ -1641,7 +1644,8 @@ class WorkOrderChecker:
                 btn = await self._page.wait_for_selector(sel, timeout=3000)
                 if btn:
                     await btn.click(timeout=self.field_timeout_ms)
-                    self._log(f"点击查询按钮: {sel}")
+                    self._query_click_count += 1
+                    self._log(f"点击查询按钮成功（实际点击累计 {self._query_click_count} 次）: {sel}")
                     # 工单页是 SPA，常驻连接可能永远达不到 networkidle；
                     # 这里只把它当"能省则省"的加速窗口，超时（常态）不再刷
                     # warning，真正的就绪判据交给 _wait_for_table_refresh。
@@ -1691,27 +1695,53 @@ class WorkOrderChecker:
         except Exception:
             return ""
 
-    async def _wait_for_table_refresh(self, before_fingerprint: str):
-        """查询后等待结果表就绪。
+    async def _table_loading_visible(self) -> bool:
+        """检测结果表的加载遮罩/忙碌状态，供相同结果内容的刷新确认使用。"""
+        try:
+            return bool(await self._page.evaluate(
+                """() => Array.from(document.querySelectorAll(
+                    '[aria-busy="true"], .el-loading-mask, .el-loading-spinner, '
+                    '.ant-spin-spinning, .ant-spin-nested-loading .ant-spin, '
+                    '[class*="loading"], [class*="Loading"]'
+                )).some(node => {
+                    const r = node.getBoundingClientRect();
+                    const s = getComputedStyle(node);
+                    return r.width > 0 && r.height > 0 && s.display !== 'none' &&
+                           s.visibility !== 'hidden' && s.opacity !== '0';
+                })"""
+            ))
+        except Exception:
+            return False
 
-        两个判据，满足其一即返回：
+    async def _wait_for_table_refresh(self, before_fingerprint: str) -> bool:
+        """等到结果指纹变化并稳定，或确认加载状态结束且表格稳定。
 
-        1. **指纹变化且连续两次采样一致** → 新结果已渲染稳定。
-           要求"连续两次一致"是为了避开表格清空/半渲染那一瞬：只看"变了"
-           就返回，可能把正在加载的空表读成 0 条，下游会误判成漏单。
-        2. 等满 table_refresh_timeout_seconds 仍未变化 → 本次结果与上次
-           逐字相同（典型场景：两次都命中"暂无数据"），指纹永远不会变。
-           旧实现这里会一直等到 dropdown 的 5 秒上限，是模糊重查慢的主因。
+        超时返回 False。相同表格内容且没有观察到加载状态时不能证明本次查询
+        更新过，因此调用方不得把旧表格当作本次查询结果。
         """
         deadline = time.monotonic() + self.table_refresh_timeout_seconds
         last = None
+        saw_loading = False
+        loading_finished_at = None
         while time.monotonic() < deadline:
+            loading = await self._table_loading_visible()
+            if loading:
+                saw_loading = True
+                loading_finished_at = None
             current = await self._table_fingerprint()
             if current and current != before_fingerprint:
                 if current == last:
-                    return
+                    return True
                 last = current
+            elif saw_loading and not loading and current:
+                if loading_finished_at is None:
+                    loading_finished_at = time.monotonic()
+                elif current == last:
+                    return True
+                else:
+                    last = current
             await asyncio.sleep(0.1)
+        return False
 
     async def _fill_query_form(
         self,
@@ -1725,9 +1755,7 @@ class WorkOrderChecker:
     ) -> bool:
         """清空并逐项填写注册工单查询条件。
 
-        该方法同时用于实时查询和缓存命中时的可视化重放。缓存命中时只重放
-        输入，不点击查询按钮，查询结果仍以缓存为准，避免把“看输入过程”和
-        “重新访问工单系统”混为一件事。
+        阶段二每条有效记录都会在填写完成后实际点击查询，不以缓存结果替代。
         """
         await self._clear_inputs()
         if self.input_step_delay:
@@ -1838,15 +1866,13 @@ class WorkOrderChecker:
             fill_kwargs["mail_date"] = mail_date
             fill_kwargs["date_window"] = date_window
 
-        # 断点续查：命中缓存仍可在真实浏览器中重放输入，便于人工观察。
         project_norm = self._compose_project_for_query(query_agent, country, service_item)
         weee_category_scope = country == "德国" and service_item.upper() == "WEEE"
         battery_category_scope = country == "德国" and service_item in {"电池法", "电池", "BAT"}
         cached = None if self.force_live_query else self.get_cached_result(
             query_agent, company, project_norm, date_window=date_window
         )
-        # 旧缓存只有主工单列表，没有“品类明细”时不能直接给出 WEEE 专项结论；
-        # 自动放弃这一次缓存并实时打开品类页签，后续新缓存会保留该明细。
+        # 专项明细必须实时读取；阶段二批量入口会强制忽略缓存。
         if (weee_category_scope or battery_category_scope) and cached is not None and not any(
             isinstance(order, dict) and order.get("品类明细") for order in cached
         ):
@@ -1894,20 +1920,33 @@ class WorkOrderChecker:
             filled = await self._fill_query_form(**fill_kwargs)
             if not filled:
                 self._last_query_status = "查询条件填写失败"
+                self._log(f"查询步骤 [{company}]：条件填写失败，未点击查询", "error")
                 return []
+            self._log(
+                f"查询步骤 [{company}]：条件填写完成；代理={query_agent or '无'}，"
+                f"国家={country or '无'}，服务类别={service_item or '无'}，"
+                f"日期={date_window[0].isoformat()+'~'+date_window[1].isoformat() if date_window else '无'}"
+            )
 
             # 6. 点查询；记录查询前表格指纹，防止异步刷新时读取上一条结果
             before_fingerprint = await self._table_fingerprint()
             await self._debug_screenshot("output/workorder_before_query.png")
+            self._log(f"查询步骤 [{company}]：准备点击查询按钮（精确查询）")
             clicked = await self._click_query_button()
             if not clicked:
                 self._last_query_status = "查询按钮失败"
+                self._log(f"查询步骤 [{company}]：点击查询失败，禁止读取旧表格", "error")
                 return []
 
-            await self._wait_for_table_refresh(before_fingerprint)
+            refreshed = await self._wait_for_table_refresh(before_fingerprint)
+            if not refreshed:
+                self._last_query_status = "查询结果刷新失败"
+                self._log(f"查询步骤 [{company}]：点击已发出但无法确认结果刷新，禁止读取旧表格", "error")
+                return []
             await self._debug_screenshot("output/workorder_after_query.png")
 
             # 7. 读取结果
+            self._log(f"查询步骤 [{company}]：刷新已确认，开始读取结果表")
             workorders = await self._extract_table_data()
             if self._last_table_parse_status == "failed":
                 # 结构读不出来时必须显式失败：若照旧当成 0 条，下游会把“没读到”
@@ -1921,7 +1960,7 @@ class WorkOrderChecker:
                 return []
             self._last_query_status = "实时查询"
             self._last_lookup_mode = "精确查询"
-            self._log(f"精确查询结果: {len(workorders)} 条 (公司={company})")
+            self._log(f"查询步骤 [{company}]：结果读取完成，精确查询返回 {len(workorders)} 条")
 
             # 8. 无结果 → 模糊匹配公司名称（只改公司名，其他不动）
             if not workorders and len(company) > 2:
@@ -1948,16 +1987,38 @@ class WorkOrderChecker:
                     company_inputs = await self._page.query_selector_all(
                         'input[placeholder*="公司"], input[placeholder*="客户"], input[placeholder*="名称"]'
                     )
+                    company_filled = False
                     for ci in company_inputs:
                         try:
-                            await ci.fill("")
-                            await ci.type(term)
+                            if not await ci.is_visible():
+                                continue
+                            await ci.fill(term)
+                            actual = (await ci.input_value()).strip()
+                            if actual == term:
+                                company_filled = True
+                                break
                         except Exception:
                             continue
 
+                    if not company_filled:
+                        self._last_query_status = "查询条件填写失败"
+                        self._log(f"查询步骤 [{company}]：模糊条件填写失败（候选词={term}），停止重查", "error")
+                        break
+
+                    self._log(f"查询步骤 [{company}]：模糊条件填写完成，候选公司={term}")
                     fuzzy_before_fingerprint = await self._table_fingerprint()
-                    await self._click_query_button()
-                    await self._wait_for_table_refresh(fuzzy_before_fingerprint)
+                    self._log(f"查询步骤 [{company}]：准备点击查询按钮（模糊重查）")
+                    fuzzy_clicked = await self._click_query_button()
+                    if not fuzzy_clicked:
+                        self._last_query_status = "查询按钮失败"
+                        self._log(f"查询步骤 [{company}]：模糊重查点击失败，禁止读取旧表格", "error")
+                        break
+                    fuzzy_refreshed = await self._wait_for_table_refresh(fuzzy_before_fingerprint)
+                    if not fuzzy_refreshed:
+                        self._last_query_status = "查询结果刷新失败"
+                        self._log(f"查询步骤 [{company}]：模糊重查无法确认结果刷新，禁止读取旧表格", "error")
+                        break
+                    self._log(f"查询步骤 [{company}]：模糊结果刷新已确认，开始读取结果表")
                     workorders = await self._extract_table_data()
                     if self._last_table_parse_status == "failed":
                         # 页面结构读不出来时，换个词再查一样读不出来，白等一轮。
@@ -1965,23 +2026,33 @@ class WorkOrderChecker:
                         self._log("模糊匹配阶段结果表仍解析失败，停止换词重试", "error")
                         workorders = []
                         break
+                    self._log(f"查询步骤 [{company}]：模糊结果读取完成，返回 {len(workorders)} 条")
                     if workorders:
                         self._last_lookup_mode = "模糊匹配"
                         self._last_fuzzy_term = term
                         self._log(f"模糊匹配命中: '{term}' → {len(workorders)} 条")
                         break
 
-                if not workorders:
+                if not workorders and self._last_query_status == "实时查询":
                     self._last_lookup_mode = "模糊匹配-无结果"
                     self._log(f"模糊匹配也无结果: {company}", "warning")
 
             if (weee_category_scope or battery_category_scope) and workorders:
                 category_records = await self._extract_weee_category_detail_data()
-                for order in workorders:
-                    if isinstance(order, dict):
-                        order["品类明细"] = category_records
-                        source_key = "德国WEEE品类明细来源" if weee_category_scope else "德国电池法品类明细来源"
-                        order[source_key] = "注册工单品类明细页签" if category_records else "未读取到品类明细"
+                detail_state_key = "德国WEEE品类明细读取状态" if weee_category_scope else "德国电池法品类明细读取状态"
+                source_key = "德国WEEE品类明细来源" if weee_category_scope else "德国电池法品类明细来源"
+                if len(workorders) == 1 and isinstance(workorders[0], dict):
+                    workorders[0]["品类明细"] = category_records
+                    workorders[0][detail_state_key] = self._last_category_detail_status
+                    workorders[0]["品类明细说明"] = self._last_category_detail_note
+                    workorders[0][source_key] = (
+                        "注册工单品类明细页签"
+                        if self._last_category_detail_status in {"loaded", "loaded_empty"}
+                        else "品类明细读取未确认"
+                    )
+                else:
+                    # 不能把一份汇总明细复制到多个候选工单中，避免候选彼此“凑齐”后误报成功。
+                    self._log("德国专项：工单候选不唯一，不将汇总品类明细分配给候选工单", "warning")
 
         except Exception as e:
             self._last_query_status = "查询异常"
@@ -2338,6 +2409,8 @@ class WorkOrderChecker:
         “待人工核对”，绝不把“页面没有品类页签”当成品类缺失。主工单列表的
         查询结果仍由 ``_extract_table_data`` 负责，两个解析状态互不污染。
         """
+        self._last_category_detail_status = "failed"
+        self._last_category_detail_note = "工单页面不可用"
         if self._page is None:
             return []
         tab_locator = self._page.locator(
@@ -2346,8 +2419,10 @@ class WorkOrderChecker:
         try:
             count = await tab_locator.count()
         except Exception:
+            self._last_category_detail_note = "无法检查页面页签"
             return []
         if count < 2:
+            self._last_category_detail_note = "未发现品类明细页签"
             self._log("德国 WEEE 专项：注册工单页面未发现“品类明细”页签，待人工核对", "warning")
             return []
 
@@ -2365,6 +2440,7 @@ class WorkOrderChecker:
             candidates = await self._page.evaluate(TABLE_EXTRACT_JS)
             candidates = [c for c in (candidates or []) if isinstance(c, dict)]
             if not candidates:
+                self._last_category_detail_note = "品类明细页签没有可见表格"
                 self._log("德国 WEEE 专项：品类明细页签没有可见表格，待人工核对", "warning")
                 return []
             best = max(
@@ -2376,13 +2452,25 @@ class WorkOrderChecker:
             )
             headers = [str(h or "").strip() for h in (best.get("headers") or [])]
             rows = best.get("rows") or []
+            if not rows and bool(best.get("empty")):
+                self._last_category_detail_status = "loaded_empty"
+                self._last_category_detail_note = "品类明细页签明确显示无记录"
+                self._log("德国专项：品类明细页签已确认无记录", "warning")
+                return []
             if not best.get("headerFound") or not rows:
+                self._last_category_detail_note = "品类明细表头或数据行无法确认"
                 self._log("德国 WEEE 专项：品类明细表没有可解析行，待人工核对", "warning")
                 return []
             records = self._rows_to_records(headers, rows)
+            if not records:
+                self._last_category_detail_note = "品类明细数据行解析为空"
+                return []
+            self._last_category_detail_status = "loaded"
+            self._last_category_detail_note = f"已读取 {len(records)} 条品类明细"
             self._log(f"德国 WEEE 专项：读取品类明细 {len(records)} 行，表头={headers[:8]}")
             return records
         except Exception as exc:
+            self._last_category_detail_note = f"读取异常：{exc}"
             self._log(f"德国 WEEE 专项：读取品类明细失败，待人工核对：{exc}", "warning")
             return []
         finally:
@@ -2432,7 +2520,7 @@ class WorkOrderChecker:
         if str(row.get("德国WEEE专项") or "") != "是":
             return
         result = compare_weee_categories(row.get("德国WEEE品类明细") or [], workorders or [])
-        if query_status and query_status not in {"实时查询", "缓存复用", "缓存复用-已展示"}:
+        if query_status and query_status != "实时查询":
             result["status"] = "pending"
             result["reason"] = f"注册工单查询未完成：{query_status}"
         row["德国WEEE品类核对"] = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
@@ -2442,17 +2530,20 @@ class WorkOrderChecker:
             "pending": "待人工核对",
         }.get(result.get("status"), "待人工核对")
         row["德国WEEE专项说明"] = result.get("reason", "")
+        row["德国WEEE额外品类"] = json.dumps(result.get("extra_items") or [], ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
     def _apply_battery_category_audit(row: Dict, workorders: List[Dict], query_status: str = "") -> None:
         if not is_german_battery(row.get("项目") or row.get("标准化项目名称")):
             return
         result = compare_battery_categories(row.get("德国电池法品类明细") or [], workorders or [])
-        if query_status and query_status not in {"实时查询", "缓存复用", "缓存复用-已展示"}:
+        if query_status and query_status != "实时查询":
             result["status"] = "pending"
             result["reason"] = f"注册工单查询未完成：{query_status}"
         row["德国电池法品类核对"] = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
         row["德国电池法品类状态"] = {"matched": "已匹配", "missing": "未找到", "pending": "待人工核对"}.get(result["status"], "待人工核对")
+        row["德国电池法专项说明"] = result.get("reason", "")
+        row["德国电池法额外品类"] = json.dumps(result.get("extra_items") or [], ensure_ascii=False, separators=(",", ":"))
 
     async def search_batch(self, mail_rows: List[Dict]) -> List[Dict]:
         """
@@ -2482,6 +2573,8 @@ class WorkOrderChecker:
 
         all_results = []
         total = len(mail_rows)
+        clicks_at_start = self._query_click_count
+        valid_query_rows = 0
         terminated = False
         termination_reason = ""
         consecutive_query_failures = 0
@@ -2548,12 +2641,16 @@ class WorkOrderChecker:
                        f"国家={country}, 项目={service_item}, "
                        f"邮件日期范围={row.get('邮件日期筛选范围') or '未设置'}")
 
-            # 工作台“漏单自动重查”会在该行留下强制重查标记；这一行
-            # 必须绕过旧缓存，否则重新进入循环仍会得到上次的漏单结论。
+            # 阶段二每条有效记录都必须访问工单系统。无论界面旧设置如何，
+            # 本次查询均绕过缓存；操作结束后恢复实例配置，避免影响外部调用者。
+            valid_query_rows += 1
             force_before = self.force_live_query
-            if row.get("_force_workorder_query"):
-                self.force_live_query = True
-                self._log("该明细来自漏单回流队列，跳过历史缓存执行实时查询", "info")
+            self.force_live_query = True
+            self._log(
+                f"查询记录 {idx}/{total}：强制实时查询，不读取历史工单缓存"
+                + ("（漏单回流）" if row.get("_force_workorder_query") else ""),
+                "info",
+            )
             try:
                 orders = await self._await_or_cancel(
                     self.search_one(
@@ -2579,6 +2676,7 @@ class WorkOrderChecker:
                 "查询按钮失败",
                 "查询异常",
                 "查询未执行",
+                "查询结果刷新失败",
                 "缓存复用-展示失败",
                 # 结果表读不出来时同样按失败处理：绝不能落到“漏单”，
                 # 否则解析故障会被伪装成业务结论。
@@ -2693,6 +2791,12 @@ class WorkOrderChecker:
                 "请核对查询条件是否真的生效（公司名称/所属代理/服务项目是否填进了页面）",
                 "warning",
             )
+
+        self._log(
+            f"本批查询点击统计：有效业务记录 {valid_query_rows} 条，"
+            f"查询按钮实际点击 {self._query_click_count - clicks_at_start} 次"
+            "（精确查询每条至少一次；无命中时安全模糊重查会额外点击）"
+        )
 
         return all_results
 

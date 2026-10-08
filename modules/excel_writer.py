@@ -756,8 +756,37 @@ class ExcelWriter:
             return "否", "查询返回多条候选，无法唯一核对，需人工复核"
         if "日期异常" in match_status:
             return "否", date_note or "工单日期异常，需人工复核"
+
+        german_categories = {group[0] for group in cls._workorder_result_groups(row)}
+        special_audits = []
+        if "德国WEEE" in german_categories:
+            special_audits.append(("德国WEEE", row.get("德国WEEE品类核对")))
+        if "德国电池法" in german_categories:
+            special_audits.append(("德国电池法", row.get("德国电池法品类核对")))
+        extra_hints = []
+        for label, raw_audit in special_audits:
+            try:
+                audit = json.loads(raw_audit) if isinstance(raw_audit, str) else raw_audit
+            except (TypeError, ValueError, json.JSONDecodeError):
+                audit = None
+            audit = audit if isinstance(audit, dict) else {}
+            audit_status = str(audit.get("status") or "pending")
+            if audit_status != "matched":
+                detail = str(audit.get("reason") or "未取得可确认的品类核验结果")
+                return "否", f"{label}品类核验{('缺项/不符' if audit_status == 'missing' else '待复核')}：{detail}"
+            extras = audit.get("extra_items") or []
+            if extras:
+                descriptions = []
+                for item in extras:
+                    if not isinstance(item, dict):
+                        continue
+                    brand = str(item.get("brand") or "无").strip()
+                    category_value = str(item.get("category_class") or item.get("category") or "无").strip()
+                    descriptions.append(f"{brand}（{category_value}）")
+                if descriptions:
+                    extra_hints.append(f"{label}额外品类：" + "、".join(descriptions))
         if found == "是":
-            return "是", ""
+            return ("是", "核对通过；" + "；".join(extra_hints)) if extra_hints else ("是", "")
         if found == "否":
             return "否", query_error or match_status or "未查到匹配工单"
         if found in {"待复核", "未比对", "未查询"}:

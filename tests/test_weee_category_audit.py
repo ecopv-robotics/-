@@ -110,19 +110,53 @@ def test_workorder_category_detail_is_compared_by_class_and_brand():
     )
     matched = compare_weee_categories(
         mail["items"],
-        [{"品类明细": [{"品类": "小型信息和电信设备"}], "品牌": "ACME"}],
+        [{"品类明细": [{"品类": "小型信息和电信设备", "品牌": "ACME"}]}],
     )
     assert matched["status"] == "matched"
     assert matched["items"][0]["status"] == "matched"
 
     missing = compare_weee_categories(
         mail["items"],
-        [{"品类明细": [{"品类": "屏幕和显示设备"}], "品牌": "ACME"}],
+        [{"品类明细": [{"品类": "屏幕和显示设备", "品牌": "ACME"}]}],
     )
     assert missing["status"] == "missing"
 
     pending = compare_weee_categories(mail["items"], [{"工单编号": "WO-1"}])
     assert pending["status"] == "pending"
+
+
+def test_weee_brand_and_category_cannot_be_cross_paired_between_rows():
+    mail_items = [{"brand": "ACME", "category": "空调", "category_class": "1",
+                   "category_class_status": "matched"}]
+    result = compare_weee_categories(mail_items, [{"品类明细": [
+        {"品牌": "ACME", "品类": "小型信息和电信设备"},
+        {"品牌": "OtherBrand", "品类": "热交换设备"},
+    ]}])
+    assert result["status"] == "missing"
+
+
+def test_weee_multiple_pairs_are_order_independent_and_extras_are_reported():
+    mail_items = [
+        {"brand": "BrandA", "category": "手机", "category_class": "6", "category_class_status": "matched"},
+        {"brand": "BrandB", "category": "空调", "category_class": "1", "category_class_status": "matched"},
+    ]
+    result = compare_weee_categories(mail_items, [{"品类明细": [
+        {"品牌": "BrandB", "品类": "热交换设备"},
+        {"品牌": "ExtraBrand", "品类": "LED灯"},
+        {"品牌": "BrandA", "品类": "小型信息和电信设备"},
+    ]}])
+    assert result["status"] == "matched"
+    assert result["extra_items"] == [{"brand": "ExtraBrand", "category": "LED灯"}]
+
+
+def test_weee_multiple_workorder_candidates_require_review():
+    mail_items = [{"brand": "ACME", "category": "手机", "category_class": "6",
+                   "category_class_status": "matched"}]
+    result = compare_weee_categories(mail_items, [
+        {"品类明细": [{"品牌": "ACME", "品类": "小型信息和电信设备"}]},
+        {"品类明细": [{"品牌": "ACME", "品类": "小型信息和电信设备"}]},
+    ])
+    assert result["status"] == "pending"
 
 
 class _FakeWEEEReviewLLM:

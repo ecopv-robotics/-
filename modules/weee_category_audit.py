@@ -1104,72 +1104,141 @@ def _workorder_values(row: Dict[str, Any], aliases: Sequence[str]) -> List[str]:
     return _dedupe(values)
 
 
+def _has_workorder_field(row: Dict[str, Any], aliases: Sequence[str]) -> bool:
+    for key in row:
+        key_norm = re.sub(r"\s+", "", _text(key).casefold())
+        if any(re.sub(r"\s+", "", alias.casefold()) in key_norm for alias in aliases):
+            return True
+    return False
+
+
 def compare_weee_categories(items: Any, workorders: Iterable[Dict[str, Any]] = ()) -> Dict[str, Any]:
-    """逐项比较邮件品类和注册工单品类。"""
+    """按工单品类明细的同一行逐项匹配邮件中的品牌＋WEEE类别。"""
     mail_items = _json_items(items)
     orders = [row for row in (workorders or []) if isinstance(row, dict)]
-    order_categories = _dedupe(value for row in orders for value in _workorder_values(row, _WORKORDER_CATEGORY_KEYS))
-    order_brands = _dedupe(value for row in orders for value in _workorder_values(row, _BRAND_KEYS))
-    order_classifications = []
-    for value in order_categories:
-        classification = classify_weee_product(value)
-        if classification.get("status") == "matched":
-            order_classifications.append({
-                "raw": value,
-                "category_class": classification.get("category_class"),
-                "category_class_name": classification.get("category_class_name"),
-            })
     checked: List[Dict[str, Any]] = []
+    if not mail_items:
+        return {"enabled": False, "status": "pending", "reason": "邮件未提取到明确品牌/品类",
+                "items": [], "extra_items": [], "workorder_count": len(orders)}
+    if not orders:
+        checked = [{**item, "status": "missing", "reason": "实时工单列表未找到对应工单"}
+                   for item in mail_items]
+        return {"enabled": True, "status": "missing", "reason": "实时工单列表未找到对应工单",
+                "items": checked, "extra_items": [], "workorder_count": 0}
+    if len(orders) != 1:
+        checked = [{**item, "status": "pending", "reason": "工单候选不唯一，无法确认品类明细归属"}
+                   for item in mail_items]
+        return {"enabled": True, "status": "pending", "reason": "工单候选不唯一，需人工复核",
+                "items": checked, "extra_items": [], "workorder_count": len(orders)}
+
+    order = orders[0]
+    detail_status = str(order.get("德国WEEE品类明细读取状态") or order.get("品类明细读取状态") or "").strip()
+    detail_rows = order.get("品类明细") or []
+    if not isinstance(detail_rows, list):
+        detail_rows = []
+    detail_rows = [row for row in detail_rows if isinstance(row, dict)]
+    if detail_status in {"failed", "pending", "not_read"}:
+        checked = [{**item, "status": "pending", "reason": "工单品类明细读取失败或不完整"}
+                   for item in mail_items]
+        return {"enabled": True, "status": "pending", "reason": "工单品类明细读取失败或不完整，需人工复核",
+                "items": checked, "extra_items": [], "workorder_count": 1}
+    if detail_status == "loaded_empty":
+        checked = [{**item, "status": "missing", "reason": "工单品类明细已确认为空"}
+                   for item in mail_items]
+        return {"enabled": True, "status": "missing", "reason": "工单品类明细为空，邮件目标品类缺失",
+                "items": checked, "extra_items": [], "workorder_count": 1}
+    if not detail_rows:
+        checked = [{**item, "status": "pending", "reason": "未确认工单品类明细是否完整"}
+                   for item in mail_items]
+        return {"enabled": True, "status": "pending", "reason": "未确认工单品类明细是否完整，需人工复核",
+                "items": checked, "extra_items": [], "workorder_count": 1}
+
+    has_brand_field = any(_has_workorder_field(row, _BRAND_KEYS) for row in detail_rows)
+    has_category_field = any(_has_workorder_field(row, _WORKORDER_CATEGORY_KEYS) for row in detail_rows)
+    if not has_brand_field or not has_category_field:
+        missing_fields = "、".join(label for present, label in (
+            (has_brand_field, "品牌"), (has_category_field, "WEEE类别")) if not present)
+        checked = [{**item, "status": "pending", "reason": f"工单品类明细缺少{missing_fields}字段"}
+                   for item in mail_items]
+        return {"enabled": True, "status": "pending", "reason": f"工单品类明细字段不清楚（缺少{missing_fields}），需人工复核",
+                "items": checked, "extra_items": [], "workorder_count": 1}
+
+    pairs = []
+    order_categories, order_brands, order_classifications = [], [], []
+    for row_index, detail_row in enumerate(detail_rows):
+        brands = _workorder_values(detail_row, _BRAND_KEYS)
+        categories = _workorder_values(detail_row, _WORKORDER_CATEGORY_KEYS)
+        order_brands.extend(brands)
+        order_categories.extend(categories)
+        for category in categories:
+            classification = classify_weee_product(category)
+            category_class = classification.get("category_class") if classification.get("status") == "matched" else ""
+            explicit_class = re.search(r"(?:第\s*)?([1-6])\s*类", category)
+            if not category_class and explicit_class:
+                category_class = explicit_class.group(1)
+            if category_class:
+                order_classifications.append({"raw": category, "category_class": category_class,
+                                              "category_class_name": classification.get("category_class_name", "")})
+        # A pair is always sourced from the same detail row. If a row contains
+        # multiple values, retain its within-row combinations; never combine rows.
+        for brand in brands:
+            for category in categories:
+                pairs.append({"brand": brand, "category": category, "row_index": row_index})
+
+    consumed = set()
     for item in mail_items:
         brand = _clean_candidate(item.get("brand"))
         category = _clean_candidate(item.get("category"))
-        if not category:
-            checked.append({**item, "status": "pending", "reason": "邮件未提取到明确品类"})
+        if not brand or not category:
+            checked.append({**item, "status": "pending", "reason": "邮件未提取到完整品牌＋WEEE类别"})
             continue
-        # LLM 只是候选建议；只有规则命中或人工保存为 matched 的项目才可
-        # 参与工单类别自动比对，避免未经确认的建议被当成最终结果。
         mail_class = item.get("category_class") if item.get("category_class_status") == "matched" else ""
         if not mail_class:
             inferred = classify_weee_product(category)
             if inferred.get("status") == "matched":
                 mail_class = inferred.get("category_class")
-        category_hit = any(
-            _norm(category) == _norm(value)
-            or _norm(category) in _norm(value)
-            or _norm(value) in _norm(category)
-            for value in order_categories
-        )
-        class_hit = bool(mail_class and any(item2.get("category_class") == mail_class for item2 in order_classifications))
-        category_hit = category_hit or class_hit
-        brand_hit = not brand or not order_brands or any(_norm(brand) == _norm(value) or _norm(brand) in _norm(value) or _norm(value) in _norm(brand) for value in order_brands)
-        if not order_categories:
-            status, reason = "pending", "注册工单未返回品类明细字段"
-        elif category_hit and brand_hit:
-            status, reason = "matched", "工单品类明细已找到"
-        elif category_hit:
-            status, reason = "pending", "品类已找到但品牌需人工核对"
+        match_index = None
+        for index, pair in enumerate(pairs):
+            if index in consumed:
+                continue
+            pair_brand = _norm(brand)
+            order_brand = _norm(pair["brand"])
+            brand_hit = bool(pair_brand and order_brand and (
+                pair_brand == order_brand or pair_brand in order_brand or order_brand in pair_brand))
+            pair_category = _norm(pair["category"])
+            mail_category = _norm(category)
+            category_hit = bool(pair_category and mail_category and (
+                pair_category == mail_category or pair_category in mail_category or mail_category in pair_category))
+            if mail_class:
+                order_classification = classify_weee_product(pair["category"])
+                order_class = order_classification.get("category_class") if order_classification.get("status") == "matched" else ""
+                explicit_class = re.search(r"(?:第\s*)?([1-6])\s*类", pair["category"])
+                if not order_class and explicit_class:
+                    order_class = explicit_class.group(1)
+                category_hit = category_hit or order_class == mail_class
+            if brand_hit and category_hit:
+                match_index = index
+                break
+        if match_index is None:
+            checked.append({**item, "status": "missing", "reason": "工单品类明细中未找到同一行对应的品牌＋WEEE类别"})
         else:
-            status, reason = "missing", "注册工单品类明细中未找到对应品类"
-        checked.append({**item, "status": status, "reason": reason})
-    if not checked:
-        overall = "pending"
-        reason = "邮件未提取到明确品牌/品类"
-    elif any(item["status"] == "missing" for item in checked):
-        overall, reason = "missing", "至少一项邮件品类未出现在注册工单品类明细"
+            consumed.add(match_index)
+            checked.append({**item, "status": "matched", "reason": "同一条工单品类明细中的品牌与WEEE类别均匹配"})
+
+    extra_items = [{"brand": pair["brand"], "category": pair["category"]}
+                   for index, pair in enumerate(pairs) if index not in consumed]
+    if any(item["status"] == "missing" for item in checked):
+        overall, reason = "missing", "至少一项邮件目标品牌＋WEEE类别缺失或不符"
     elif any(item["status"] == "pending" for item in checked):
-        overall, reason = "pending", "品类明细不完整，需人工核对"
+        overall, reason = "pending", "邮件或工单品类字段不完整，需人工复核"
     else:
-        overall, reason = "matched", "邮件品类与注册工单品类明细全部对应"
-    return {
-        "enabled": bool(mail_items),
-        "status": overall,
-        "reason": reason,
-        "items": checked,
-        "workorder_categories": order_categories,
-        "workorder_category_classes": order_classifications,
-        "workorder_brands": order_brands,
-        "workorder_count": len(orders),
-    }
+        overall, reason = "matched", "邮件目标品牌＋WEEE类别全部匹配"
+        if extra_items:
+            reason += f"；工单另有 {len(extra_items)} 项额外品类"
+    return {"enabled": True, "status": overall, "reason": reason, "items": checked,
+            "extra_items": extra_items, "workorder_categories": _dedupe(order_categories),
+            "workorder_category_classes": order_classifications,
+            "workorder_brands": _dedupe(order_brands), "workorder_count": 1}
 
 
 def audit_row(row: Dict[str, Any], workorders: Iterable[Dict[str, Any]] = ()) -> Dict[str, Any]:
