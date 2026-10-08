@@ -4,7 +4,8 @@ import pytest
 from openpyxl import Workbook, load_workbook
 
 from modules.battery_review import (battery_review, classify_battery_category,
-                                    extract_battery_items, normalize_battery_items)
+                                    compare_battery_categories, extract_battery_items,
+                                    normalize_battery_items)
 from workbench_server import WorkbenchStore, _detail_confirmation_ready
 
 
@@ -89,6 +90,16 @@ def test_stage1_row_contains_battery_items_from_contract():
     assert len(items) == 1
     assert items[0]["category_class"] == "启动电池"
     assert not items[0]["battery_confirmed"]
+
+
+def test_battery_workorder_category_is_compared_independently():
+    items = [{"brand": "DemoBrand", "category": "汽车启动电池", "category_class": "启动电池"}]
+    matched = compare_battery_categories(items, [{"品类明细": [{"电池类别": "Starterbatterie", "品牌": "DemoBrand"}]}])
+    assert matched["status"] == "matched"
+    missing = compare_battery_categories(items, [{"品类明细": [{"电池类别": "工业电池", "品牌": "DemoBrand"}]}])
+    assert missing["status"] == "missing"
+    pending = compare_battery_categories(items, [{"工单编号": "WO-1"}])
+    assert pending["status"] == "pending"
 
 
 def make_store(tmp_path):

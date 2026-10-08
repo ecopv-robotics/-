@@ -28,6 +28,7 @@ from urllib.parse import urljoin
 
 from utils.fuzzy_match import fuzzy_match_pair, normalize_text, to_simplified
 from modules.weee_category_audit import compare_weee_categories
+from modules.battery_review import compare_battery_categories, is_german_battery
 
 
 REGISTRATION_ORDER_PATH = "/work/workOrderRegister"
@@ -1778,12 +1779,13 @@ class WorkOrderChecker:
         # 断点续查：命中缓存仍可在真实浏览器中重放输入，便于人工观察。
         project_norm = self._compose_project_for_query(query_agent, country, service_item)
         weee_category_scope = country == "德国" and service_item.upper() == "WEEE"
+        battery_category_scope = country == "德国" and service_item in {"电池法", "电池", "BAT"}
         cached = None if self.force_live_query else self.get_cached_result(
             query_agent, company, project_norm, date_window=date_window
         )
         # 旧缓存只有主工单列表，没有“品类明细”时不能直接给出 WEEE 专项结论；
         # 自动放弃这一次缓存并实时打开品类页签，后续新缓存会保留该明细。
-        if weee_category_scope and cached is not None and not any(
+        if (weee_category_scope or battery_category_scope) and cached is not None and not any(
             isinstance(order, dict) and order.get("品类明细") for order in cached
         ):
             self._log("德国 WEEE 工单缓存缺少品类明细，改为实时读取注册工单品类页签", "info")
@@ -1911,12 +1913,13 @@ class WorkOrderChecker:
                     self._last_lookup_mode = "模糊匹配-无结果"
                     self._log(f"模糊匹配也无结果: {company}", "warning")
 
-            if weee_category_scope and workorders:
+            if (weee_category_scope or battery_category_scope) and workorders:
                 category_records = await self._extract_weee_category_detail_data()
                 for order in workorders:
                     if isinstance(order, dict):
                         order["品类明细"] = category_records
-                        order["德国WEEE品类明细来源"] = "注册工单品类明细页签" if category_records else "未读取到品类明细"
+                        source_key = "德国WEEE品类明细来源" if weee_category_scope else "德国电池法品类明细来源"
+                        order[source_key] = "注册工单品类明细页签" if category_records else "未读取到品类明细"
 
         except Exception as e:
             self._last_query_status = "查询异常"
@@ -2378,6 +2381,17 @@ class WorkOrderChecker:
         }.get(result.get("status"), "待人工核对")
         row["德国WEEE专项说明"] = result.get("reason", "")
 
+    @staticmethod
+    def _apply_battery_category_audit(row: Dict, workorders: List[Dict], query_status: str = "") -> None:
+        if not is_german_battery(row.get("项目") or row.get("标准化项目名称")):
+            return
+        result = compare_battery_categories(row.get("德国电池法品类明细") or [], workorders or [])
+        if query_status and query_status not in {"实时查询", "缓存复用", "缓存复用-已展示"}:
+            result["status"] = "pending"
+            result["reason"] = f"注册工单查询未完成：{query_status}"
+        row["德国电池法品类核对"] = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+        row["德国电池法品类状态"] = {"matched": "已匹配", "missing": "未找到", "pending": "待人工核对"}.get(result["status"], "待人工核对")
+
     async def search_batch(self, mail_rows: List[Dict]) -> List[Dict]:
         """
         批量查询: 逐条数据进入注册工单页面，填条件，查询，读取结果
@@ -2457,6 +2471,7 @@ class WorkOrderChecker:
                 row["模糊查询词"] = ""
                 row["日期筛选说明"] = reject_reason
                 self._apply_weee_category_audit(row, [], "客户名称无效-跳过查询")
+                self._apply_battery_category_audit(row, [], "客户名称无效-跳过查询")
                 row["查询时间戳"] = datetime.now().isoformat(timespec="seconds")
                 self._log(
                     f"第 {idx}/{total} 条客户字段不是有效公司名，跳过查询: "
@@ -2523,6 +2538,7 @@ class WorkOrderChecker:
                     "已跳过本条，后续记录继续执行"
                 )
                 self._apply_weee_category_audit(row, [], query_status)
+                self._apply_battery_category_audit(row, [], query_status)
                 row["查询时间戳"] = datetime.now().isoformat(timespec="seconds")
                 self.last_processed_rows.append(row)
                 all_results.append(row)
@@ -2558,6 +2574,7 @@ class WorkOrderChecker:
             row["日期筛选说明"] = self._last_date_filter_status
             self.match_records([row], orders)
             self._apply_weee_category_audit(row, orders, query_status)
+            self._apply_battery_category_audit(row, orders, query_status)
             all_results.append(row)
             self.last_processed_rows.append(row)
             lookup_detail = row["查询方式"]
