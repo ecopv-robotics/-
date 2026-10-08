@@ -83,6 +83,40 @@ def test_refresh_timeout_does_not_read_previous_table():
     assert checker._last_query_status == "查询结果刷新失败"
 
 
+def test_refresh_wait_only_confirms_changed_stable_result():
+    checker = make_checker()
+    checker.table_refresh_timeout_seconds = 0.05
+    checker._table_loading_visible = lambda: asyncio.sleep(0, result=False)
+    checker._table_fingerprint = lambda: asyncio.sleep(0, result="same old result")
+    assert asyncio.run(checker._wait_for_table_refresh("same old result")) is False
+
+
+def test_query_form_refuses_to_submit_when_date_controls_are_incomplete():
+    checker = make_checker()
+
+    async def no_op():
+        return None
+
+    async def filled(*_args, **_kwargs):
+        return True
+
+    async def date_not_filled(_window):
+        checker._last_date_filter_status = "网页日期控件未找到，查询条件不完整"
+        return False
+
+    checker._clear_inputs = no_op
+    checker._fill_company_name = filled
+    checker._select_dropdown = filled
+    checker._fill_order_date_window = date_not_filled
+    window = checker._email_date_window("2026-08-20")
+    result = asyncio.run(checker._fill_query_form(
+        "示例科技有限公司", agent="代理甲", country="波兰", service_item="包装法",
+        mail_date="2026-08-20", date_window=window,
+    ))
+    assert result is False
+    assert "查询条件不完整" in checker._last_date_filter_status
+
+
 def test_fuzzy_click_failure_does_not_read_exact_query_table_again():
     checker = make_checker()
     click_results = iter([True, False])
