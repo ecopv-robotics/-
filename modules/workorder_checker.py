@@ -1554,7 +1554,9 @@ class WorkOrderChecker:
 
     async def _select_calendar_day(self, date_text: str) -> bool:
         """通过工单页实际日期弹层选择日期，不直接改只读输入框的显示值。"""
-        popup = self._page.locator(".ant-picker-dropdown:visible")
+        popup = self._page.locator(
+            ".ant-picker-dropdown.ant-picker-dropdown-range:visible"
+        )
         target = self._parse_date_value(date_text)
         if target is None:
             return False
@@ -1563,7 +1565,10 @@ class WorkOrderChecker:
         for _ in range(36):
             if not await popup.count():
                 return False
-            cells = popup.locator(f'td[title="{date_text}"]')
+            cells = popup.locator(
+                f'td.ant-picker-cell-in-view[title="{date_text}"]'
+                ":not(.ant-picker-cell-disabled)"
+            )
             for index in range(await cells.count()):
                 cell = cells.nth(index)
                 if await cell.is_visible():
@@ -1597,130 +1602,114 @@ class WorkOrderChecker:
             await asyncio.sleep(0.05)
         return False
 
-    async def _fill_date_input(self, field_name: str, value, selector_key: str) -> bool:
-        """通过日期控件选择并读回日期；只读输入框不可用文本填充冒充已提交。"""
-        date_text = self._format_date_input(value)
-        if not date_text:
-            return False
-        timeout_ms = min(self.field_timeout_ms, 1800)
-        for sel in self.selectors.get(selector_key, []):
-            try:
-                control = await self._page.wait_for_selector(
-                    sel, state="visible", timeout=timeout_ms
-                )
-                if not control:
-                    continue
-                target = control
-                tag = await control.evaluate("el => el.tagName.toLowerCase()")
-                if tag not in ("input", "textarea"):
-                    nested = await control.query_selector(
-                        'input[placeholder], input[aria-label], input'
-                    )
-                    if nested and await nested.is_visible():
-                        target = nested
-
-                read_only = bool(
-                    await target.evaluate(
-                        "el => Boolean(el.readOnly || el.hasAttribute('readonly'))"
-                    )
-                )
-                if not read_only:
-                    try:
-                        await target.fill(date_text, timeout=timeout_ms)
-                        await target.press("Tab")
-                    except Exception:
-                        pass
-                    actual_text = str(
-                        await target.evaluate("el => String(el.value || '')") or ""
-                    ).strip()
-                    actual_date = self._parse_date_value(actual_text)
-                    expected_date = self._parse_date_value(date_text)
-                    if (
-                        expected_date is not None
-                        and actual_date is not None
-                        and actual_date.date() == expected_date.date()
-                    ):
-                        self._log(f"{field_name}已填写并读回确认: {actual_text}")
-                        return True
-
-                popup = self._page.locator(".ant-picker-dropdown:visible")
-                popup_open = bool(await popup.count())
-                if "开始" in field_name and popup_open:
-                    # 若上次操作遗留弹层，先关掉，避免把新开始日误作结束日。
-                    await self._page.keyboard.press("Escape")
-                    popup_open = False
-                if not popup_open:
-                    await target.click(timeout=timeout_ms)
-                if not await self._select_calendar_day(date_text):
-                    self._log(
-                        f"{field_name}无法在日历弹层中选择目标日期: {date_text}",
-                        "warning",
-                    )
-                    continue
-
-                actual_text = str(
-                    await target.evaluate("el => String(el.value || '')") or ""
-                ).strip()
-                expected_date = self._parse_date_value(date_text)
-                actual_date = self._parse_date_value(actual_text)
-                if (
-                    expected_date is None
-                    or actual_date is None
-                    or actual_date.date() != expected_date.date()
-                ):
-                    self._log(
-                        f"{field_name}日历选择后读回值不一致: 目标={date_text}, "
-                        f"实际={actual_text or '空'} (selector={sel})",
-                        "warning",
-                    )
-                    continue
-                self._log(
-                    f"{field_name}已通过日历选择并读回确认: {actual_text}"
-                    f" (selector={sel})"
-                )
-                return True
-            except Exception as exc:
-                self._log(f"{field_name}控件操作失败 ({sel}): {exc}", "warning")
-        return False
-
     async def _fill_order_date_window(self, date_window) -> bool:
         """尝试填写下单开始/结束日期；失败只记录，不阻止查询。"""
-        # 未完整选中并读回之前，不能把上一条记录的已提交窗口当成本条条件。
         self._expected_query_date_window = None
         self._last_query_response_status = None
         self._last_query_response_note = ""
         if not date_window:
             self._last_date_filter_status = "邮件日期为空，未设置网页日期筛选"
             return False
-        date_from, date_to = date_window
-        from_ok = await self._fill_date_input(
-            "下单开始日期", date_from, "order_date_from_input"
-        )
-        to_ok = await self._fill_date_input(
-            "下单结束日期", date_to, "order_date_to_input"
-        )
-        if from_ok and to_ok:
-            self._expected_query_date_window = (
-                self._format_date_input(date_from),
-                self._format_date_input(date_to),
-            )
-            self._last_date_filter_status = (
-                "网页日期范围已通过日历选择并提交："
-                f"{self._expected_query_date_window[0]}~"
-                f"{self._expected_query_date_window[1]}"
-            )
-        elif from_ok or to_ok:
-            self._last_date_filter_status = "网页日期控件仅设置一端，查询条件不完整"
-        else:
-            self._last_date_filter_status = "网页日期控件未找到，查询条件不完整"
-        if not (from_ok and to_ok):
+        start_text = self._format_date_input(date_window[0])
+        end_text = self._format_date_input(date_window[1])
+        timeout_ms = min(self.field_timeout_ms, 5000)
+        range_picker = None
+        start_input = end_input = None
+
+        # 页面只有一个 Ant Design 日期范围控件。先从开始日期定位父控件，
+        # 再在同一控件中依次选择左右两端，避免把两个只读框当成独立日历。
+        for selector in self.selectors.get("order_date_from_input", []):
+            try:
+                candidate = self._page.locator(selector).first
+                if not await candidate.count():
+                    continue
+                parent = candidate.locator(
+                    "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' ant-picker-range ')][1]"
+                )
+                if not await parent.count():
+                    continue
+                inputs = parent.locator(".ant-picker-input input")
+                if await inputs.count() < 2:
+                    continue
+                range_picker = parent
+                start_input = inputs.nth(0)
+                end_input = inputs.nth(1)
+                break
+            except Exception as exc:
+                self._log(f"定位日期范围控件失败 ({selector}): {exc}", "warning")
+
+        if range_picker is None:
+            self._last_date_filter_status = "未找到完整的日期范围控件，继续查询"
             self._log(self._last_date_filter_status, "warning")
-        # 日期弹层若仍打开，关闭它以免遮住后续查询按钮。
+            return False
+
+        popup = self._page.locator(
+            ".ant-picker-dropdown.ant-picker-dropdown-range:visible"
+        )
         try:
-            await self._page.keyboard.press("Escape")
-        except Exception:
-            pass
-        return from_ok and to_ok
+            await start_input.wait_for(state="visible", timeout=timeout_ms)
+            await start_input.click(timeout=timeout_ms)
+            await popup.wait_for(state="visible", timeout=timeout_ms)
+
+            if not await self._select_calendar_day(start_text):
+                self._last_date_filter_status = f"开始日期未能选入日历：{start_text}"
+                self._log(self._last_date_filter_status, "warning")
+                raise RuntimeError("开始日期选择未完成")
+
+            # 起始日期选中后，范围控件通常自动切到右侧输入框；若页面没切换，
+            # 明确点截止日期框，确保下一次日历点击写入右侧日期。
+            active_input = range_picker.locator(
+                ".ant-picker-input-active input"
+            ).first
+            active_placeholder = await active_input.get_attribute("placeholder") \
+                if await active_input.count() else ""
+            end_placeholder = await end_input.get_attribute("placeholder") or ""
+            if active_placeholder != end_placeholder:
+                await end_input.click(timeout=timeout_ms)
+                await popup.wait_for(state="visible", timeout=timeout_ms)
+
+            if not await self._select_calendar_day(end_text):
+                self._last_date_filter_status = f"截止日期未能选入日历：{end_text}"
+                self._log(self._last_date_filter_status, "warning")
+                raise RuntimeError("截止日期选择未完成")
+
+            # 成功选择右端日期后控件会自行收起；不发送 Escape，以免撤销日期范围。
+            await popup.wait_for(state="hidden", timeout=timeout_ms)
+            actual_start = (await start_input.input_value()).strip()
+            actual_end = (await end_input.input_value()).strip()
+            actual_start_date = self._parse_date_value(actual_start)
+            actual_end_date = self._parse_date_value(actual_end)
+            expected_start_date = self._parse_date_value(start_text)
+            expected_end_date = self._parse_date_value(end_text)
+            matched = bool(
+                actual_start_date and actual_end_date
+                and expected_start_date and expected_end_date
+                and actual_start_date.date() == expected_start_date.date()
+                and actual_end_date.date() == expected_end_date.date()
+            )
+            if matched:
+                self._expected_query_date_window = (start_text, end_text)
+                self._last_date_filter_status = (
+                    f"日期范围已选入并读回：{actual_start}~{actual_end}"
+                )
+                self._log(self._last_date_filter_status)
+            else:
+                self._last_date_filter_status = (
+                    f"日期范围已操作，读回为 {actual_start or '空'}~{actual_end or '空'}；继续查询"
+                )
+                self._log(self._last_date_filter_status, "warning")
+            return matched
+        except Exception as exc:
+            if not self._last_date_filter_status.startswith(("开始日期未能", "截止日期未能")):
+                self._last_date_filter_status = f"日期范围操作未完成：{str(exc).splitlines()[0][:160]}"
+                self._log(self._last_date_filter_status, "warning")
+            # 失败时才关闭未完成的浮层，避免它挡住后续“查询”按钮。
+            try:
+                if await popup.count():
+                    await self._page.keyboard.press("Escape")
+            except Exception:
+                pass
+            return False
 
     async def _clear_inputs(self):
         """只清空注册工单查询页的目标字段，不触碰页面其他控件。"""
