@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 from modules.excel_writer import ExcelWriter
@@ -17,6 +18,27 @@ def make_checker():
     })
     checker._logged_in = True
     return checker
+
+
+def configure_batch_runtime(checker, search_one):
+    checker._cancel_requested = None
+    checker.cancelled = False
+    checker._cancel_notice_logged = False
+    checker.last_processed_rows = []
+    checker.max_consecutive_query_failures = 3
+    checker.max_total_seconds = 0
+
+    async def passthrough(awaitable, _cancelled_value):
+        return await awaitable
+
+    async def ready():
+        return True
+
+    checker._await_or_cancel = passthrough
+    checker._ensure_login_session = ready
+    checker._navigate_to_order_list = ready
+    checker.search_one = search_one
+    checker._log = lambda *_args, **_kwargs: None
 
 
 def test_exact_click_failure_does_not_read_previous_table():
@@ -117,6 +139,45 @@ def test_query_form_refuses_to_submit_when_date_controls_are_incomplete():
     assert "查询条件不完整" in checker._last_date_filter_status
 
 
+def test_date_input_must_read_back_the_requested_value():
+    class FakeDateInput:
+        def __init__(self, accepts_value):
+            self.value = ""
+            self.accepts_value = accepts_value
+
+        async def evaluate(self, expression):
+            if "tagName" in expression:
+                return "input"
+            return self.value
+
+        async def click(self):
+            return None
+
+        async def fill(self, value, **_kwargs):
+            if self.accepts_value:
+                self.value = value
+
+        async def press(self, _key):
+            return None
+
+    async def run_case(accepts_value):
+        checker = make_checker()
+        target = FakeDateInput(accepts_value)
+
+        async def wait_for_selector(_selector, **_kwargs):
+            return target
+
+        checker._page = SimpleNamespace(wait_for_selector=wait_for_selector)
+        checker.selectors = {"order_date_from_input": ["date-start"]}
+        checker._log = lambda *_args, **_kwargs: None
+        return await checker._fill_date_input(
+            "下单开始日期", "2026-07-26", "order_date_from_input"
+        )
+
+    assert asyncio.run(run_case(True)) is True
+    assert asyncio.run(run_case(False)) is False
+
+
 def test_fuzzy_click_failure_does_not_read_exact_query_table_again():
     checker = make_checker()
     click_results = iter([True, False])
@@ -197,7 +258,7 @@ def test_search_batch_forces_live_query_for_each_valid_row_even_if_disabled_in_c
         checker._last_lookup_mode = "精确查询"
         checker._last_fuzzy_term = ""
         checker._last_date_filter_status = "日期已设置"
-        return [{"工单编号": "WO-1"}]
+        return [{"工单编号": "WO-1", "下单日期": "2026-08-20"}]
 
     def match(rows, _orders):
         rows[0]["是否已录单"] = "是"
@@ -222,6 +283,192 @@ def test_search_batch_forces_live_query_for_each_valid_row_even_if_disabled_in_c
     assert checker._query_click_count == 2
     assert checker.force_live_query is False
     assert result[2]["RPA查询状态"] == "查询条件不完整-未执行"
+
+
+def test_date_window_keeps_inclusive_boundaries_and_unknowns_but_excludes_outside():
+    checker = make_checker()
+    window = checker._email_date_window("2026-08-26")
+    orders = [
+        {"工单编号": "START", "下单日期": "2026-07-26"},
+        {"工单编号": "END", "下单日期": "2026-09-26"},
+        {"工单编号": "BEFORE", "下单日期": "2026-07-25"},
+        {"工单编号": "AFTER", "下单日期": "2026-09-27"},
+        {"工单编号": "EMPTY", "下单日期": ""},
+        {"工单编号": "UNPARSEABLE", "下单日期": "not-a-date"},
+    ]
+
+    candidates, outside, unknown = checker._filter_workorders_by_date_window(orders, window)
+
+    assert [order["工单编号"] for order in candidates] == [
+        "START", "END", "EMPTY", "UNPARSEABLE"
+    ]
+    assert [order["工单编号"] for order in outside] == ["BEFORE", "AFTER"]
+    assert [order["工单编号"] for order in unknown] == ["EMPTY", "UNPARSEABLE"]
+
+
+def test_search_batch_excludes_out_of_window_orders_before_unique_match():
+    checker = make_checker()
+
+    async def search_one(**_kwargs):
+        checker._last_query_status = "实时查询"
+        checker._last_lookup_mode = "精确查询"
+        checker._last_fuzzy_term = ""
+        checker._last_date_filter_status = "网页日期已设置"
+        return [
+            {
+                "工单编号": "IN-WINDOW",
+                "下单日期": "2026-08-26",
+                "代理": "代理甲",
+                "公司名称": "示例科技有限公司",
+                "项目": "波兰包装法",
+            },
+            {
+                "工单编号": "OUT-OF-WINDOW",
+                "下单日期": "2026-03-19",
+                "代理": "代理甲",
+                "公司名称": "示例科技有限公司",
+                "项目": "波兰包装法",
+            },
+        ]
+
+    configure_batch_runtime(checker, search_one)
+    rows = [{
+        "客户": "示例科技有限公司",
+        "代理": "代理甲",
+        "项目": "波兰包装法",
+        "date": "2026-08-26",
+    }]
+
+    result = asyncio.run(checker.search_batch(rows))
+    row = result[0]
+
+    assert row["是否已录单"] == "是"
+    assert row["匹配状态"] == "精确匹配"
+    assert [order["下单日期"] for order in row["工单记录"]] == ["2026-08-26"]
+    assert "窗口内 1 条" in row["日期筛选说明"]
+    assert "窗口外剔除 1 条" in row["日期筛选说明"]
+
+
+def test_search_batch_marks_unknown_order_date_for_review_and_blocks_german_success():
+    checker = make_checker()
+
+    async def search_one(**_kwargs):
+        checker._last_query_status = "实时查询"
+        checker._last_lookup_mode = "精确查询"
+        checker._last_fuzzy_term = ""
+        checker._last_date_filter_status = "网页日期已设置"
+        return [{
+            "工单编号": "UNKNOWN-DATE",
+            "下单日期": "unknown",
+            "代理": "代理甲",
+            "公司名称": "示例科技有限公司",
+            "项目": "德国WEEE",
+            "品类明细": [{"品牌": "Brand-A", "类别": "第五类"}],
+            "德国WEEE品类明细读取状态": "loaded",
+        }]
+
+    configure_batch_runtime(checker, search_one)
+    rows = [{
+        "客户": "示例科技有限公司",
+        "代理": "代理甲",
+        "项目": "德国WEEE",
+        "date": "2026-08-26",
+        "德国WEEE专项": "是",
+        "德国WEEE品类明细": [{"brand": "Brand-A", "category": "第五类"}],
+    }]
+
+    row = asyncio.run(checker.search_batch(rows))[0]
+
+    assert row["是否已录单"] == "待复核"
+    assert row["匹配状态"] == "下单日期待复核"
+    audit = json.loads(row["德国WEEE品类核对"])
+    assert audit["status"] == "pending"
+    success, reason = ExcelWriter._workorder_success_and_reason(row, "queried")
+    assert success == "否"
+    assert "日期缺失或无法解析" in reason
+
+
+def test_german_detail_stays_pending_when_raw_multi_match_cannot_be_bound_after_date_filter():
+    checker = make_checker()
+
+    async def search_one(**_kwargs):
+        checker._last_query_status = "实时查询"
+        checker._last_lookup_mode = "精确查询"
+        checker._last_fuzzy_term = ""
+        checker._last_date_filter_status = "网页日期已设置"
+        return [
+            {
+                "工单编号": "IN-WINDOW",
+                "下单日期": "2026-08-26",
+                "代理": "代理甲",
+                "公司名称": "示例科技有限公司",
+                "项目": "德国WEEE",
+                "品类明细": [{"品牌": "Brand-A", "类别": "第五类"}],
+                "德国WEEE品类明细读取状态": "loaded",
+            },
+            {
+                "工单编号": "OUT-OF-WINDOW",
+                "下单日期": "2026-03-19",
+                "代理": "代理甲",
+                "公司名称": "示例科技有限公司",
+                "项目": "德国WEEE",
+            },
+        ]
+
+    configure_batch_runtime(checker, search_one)
+    rows = [{
+        "客户": "示例科技有限公司",
+        "代理": "代理甲",
+        "项目": "德国WEEE",
+        "date": "2026-08-26",
+        "德国WEEE专项": "是",
+        "德国WEEE品类明细": [{"brand": "Brand-A", "category": "第五类"}],
+    }]
+
+    row = asyncio.run(checker.search_batch(rows))[0]
+    audit = json.loads(row["德国WEEE品类核对"])
+    success, reason = ExcelWriter._workorder_success_and_reason(row, "queried")
+
+    assert row["是否已录单"] == "待复核"
+    assert row["匹配状态"] == "品类明细关联待复核"
+    assert audit["status"] == "pending"
+    assert "无法安全关联" in reason
+    assert success == "否"
+
+
+def test_search_batch_fails_when_all_live_candidates_are_outside_date_window():
+    checker = make_checker()
+
+    async def search_one(**_kwargs):
+        checker._last_query_status = "实时查询"
+        checker._last_lookup_mode = "精确查询"
+        checker._last_fuzzy_term = ""
+        checker._last_date_filter_status = "网页日期已设置"
+        return [{
+            "工单编号": "OLD",
+            "下单日期": "2026-03-19",
+            "代理": "代理甲",
+            "公司名称": "示例科技有限公司",
+            "项目": "德国WEEE",
+        }]
+
+    configure_batch_runtime(checker, search_one)
+    rows = [{
+        "客户": "示例科技有限公司",
+        "代理": "代理甲",
+        "项目": "德国WEEE",
+        "date": "2026-08-26",
+        "德国WEEE专项": "是",
+        "德国WEEE品类明细": [{"brand": "Brand-A", "category": "第五类"}],
+    }]
+
+    row = asyncio.run(checker.search_batch(rows))[0]
+    success, reason = ExcelWriter._workorder_success_and_reason(row, "queried")
+
+    assert row["是否已录单"] == "否"
+    assert row["匹配状态"] == "日期范围内无工单"
+    assert success == "否"
+    assert "下单日期均超出有效窗口" in reason
 
 
 def test_german_workorder_export_requires_completed_special_audit():

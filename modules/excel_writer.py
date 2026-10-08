@@ -756,6 +756,10 @@ class ExcelWriter:
             return "否", "查询返回多条候选，无法唯一核对，需人工复核"
         if "日期异常" in match_status:
             return "否", date_note or "工单日期异常，需人工复核"
+        if "日期范围内无工单" in match_status:
+            return "否", query_error or date_note or match_status
+        if "日期待复核" in match_status or "明细关联待复核" in match_status:
+            return "否", query_error or date_note or match_status
 
         german_categories = {group[0] for group in cls._workorder_result_groups(row)}
         special_audits = []

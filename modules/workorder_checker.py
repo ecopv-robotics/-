@@ -1507,7 +1507,7 @@ class WorkOrderChecker:
         return str(value or "")[:10]
 
     async def _fill_date_input(self, field_name: str, value, selector_key: str) -> bool:
-        """填写页面日期输入框；找不到控件时交给本地日期筛选兜底。"""
+        """填写并读回验证页面日期输入框；无法确认则不提交查询。"""
         date_text = self._format_date_input(value)
         if not date_text:
             return False
@@ -1537,7 +1537,28 @@ class WorkOrderChecker:
                     await target.press("Tab")
                 except Exception:
                     pass
-                self._log(f"{field_name}已填入: {date_text} (selector={sel})")
+                expected_date = self._parse_date_value(date_text)
+                try:
+                    actual_text = str(
+                        await target.evaluate("el => String(el.value || '')") or ""
+                    ).strip()
+                except Exception:
+                    actual_text = ""
+                actual_date = self._parse_date_value(actual_text)
+                if (
+                    expected_date is None
+                    or actual_date is None
+                    or actual_date.date() != expected_date.date()
+                ):
+                    self._log(
+                        f"{field_name}读回值与目标日期不一致: 目标={date_text}, "
+                        f"实际={actual_text or '空'} (selector={sel})",
+                        "warning",
+                    )
+                    continue
+                self._log(
+                    f"{field_name}已填入并读回确认: {actual_text} (selector={sel})"
+                )
                 return True
             except Exception as exc:
                 self._log(f"{field_name}控件操作失败 ({sel}): {exc}", "warning")
@@ -2520,12 +2541,20 @@ class WorkOrderChecker:
         return ""
 
     @staticmethod
-    def _apply_weee_category_audit(row: Dict, workorders: List[Dict], query_status: str = "") -> None:
+    def _apply_weee_category_audit(
+        row: Dict,
+        workorders: List[Dict],
+        query_status: str = "",
+        review_reason: str = "",
+    ) -> None:
         """把德国 WEEE 品类逐项核对结果写回阶段二行。"""
         if str(row.get("德国WEEE专项") or "") != "是":
             return
         result = compare_weee_categories(row.get("德国WEEE品类明细") or [], workorders or [])
-        if query_status and query_status != "实时查询":
+        if review_reason:
+            result["status"] = "pending"
+            result["reason"] = review_reason
+        elif query_status and query_status != "实时查询":
             result["status"] = "pending"
             result["reason"] = f"注册工单查询未完成：{query_status}"
         row["德国WEEE品类核对"] = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
@@ -2538,11 +2567,19 @@ class WorkOrderChecker:
         row["德国WEEE额外品类"] = json.dumps(result.get("extra_items") or [], ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
-    def _apply_battery_category_audit(row: Dict, workorders: List[Dict], query_status: str = "") -> None:
+    def _apply_battery_category_audit(
+        row: Dict,
+        workorders: List[Dict],
+        query_status: str = "",
+        review_reason: str = "",
+    ) -> None:
         if not is_german_battery(row.get("项目") or row.get("标准化项目名称")):
             return
         result = compare_battery_categories(row.get("德国电池法品类明细") or [], workorders or [])
-        if query_status and query_status != "实时查询":
+        if review_reason:
+            result["status"] = "pending"
+            result["reason"] = review_reason
+        elif query_status and query_status != "实时查询":
             result["status"] = "pending"
             result["reason"] = f"注册工单查询未完成：{query_status}"
         row["德国电池法品类核对"] = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
@@ -2759,21 +2796,90 @@ class WorkOrderChecker:
             row["RPA查询状态"] = query_status
             row["查询方式"] = self._last_lookup_mode or "未记录"
             row["模糊查询词"] = self._last_fuzzy_term
-            row["日期筛选说明"] = self._last_date_filter_status
-            self.match_records([row], orders)
-            self._apply_weee_category_audit(row, orders, query_status)
-            self._apply_battery_category_audit(row, orders, query_status)
+            raw_orders = list(orders or [])
+            date_candidates, out_of_window, unknown_date = (
+                self._filter_workorders_by_date_window(raw_orders, date_window)
+            )
+            window_text = (
+                f"{date_window[0].isoformat()}~{date_window[1].isoformat()}"
+                if date_window else "未设置"
+            )
+            in_window_count = len(date_candidates) - len(unknown_date)
+            filter_note = (
+                f"下单日期窗口 {window_text}：实时返回 {len(raw_orders)} 条，"
+                f"窗口内 {in_window_count} 条，窗口外剔除 {len(out_of_window)} 条，"
+                f"日期缺失/无法解析 {len(unknown_date)} 条"
+            )
+            self._log(f"查询记录 {idx}/{total}：{filter_note}")
+            row["日期筛选说明"] = filter_note
+
+            # The platform may return rows outside its date filter. Only rows
+            # with a parsed order date inside the inclusive window can count as
+            # a match. Unknown-date rows remain candidates but block automation.
+            self.match_records([row], date_candidates)
+            match_note = str(row.get("日期筛选说明") or "").strip()
+            date_review_reason = ""
+            if unknown_date:
+                date_review_reason = (
+                    f"{len(unknown_date)} 条候选工单的下单日期缺失或无法解析，"
+                    "无法确认是否落在邮件日期窗口内，需人工复核"
+                )
+                row["是否已录单"] = "待复核"
+                row["匹配状态"] = "下单日期待复核"
+                row["_query_error"] = date_review_reason
+                row["日期筛选说明"] = f"{filter_note}；{date_review_reason}"
+            elif not date_candidates and out_of_window:
+                date_review_reason = (
+                    f"实时查询返回 {len(raw_orders)} 条工单，但下单日期均超出有效窗口 "
+                    f"{window_text}；该日期范围内未找到工单"
+                )
+                row["是否已录单"] = "否"
+                row["匹配状态"] = "日期范围内无工单"
+                row["下单日期"] = ""
+                row["工单记录"] = []
+                row["_query_error"] = date_review_reason
+                row["日期筛选说明"] = f"{filter_note}；{date_review_reason}"
+            elif match_note and match_note != filter_note:
+                row["日期筛选说明"] = f"{filter_note}；{match_note}"
+
+            category_review_reason = ""
+            if (
+                len(raw_orders) > 1
+                and len(date_candidates) == 1
+                and out_of_window
+                and not unknown_date
+                and (
+                    row.get("德国WEEE专项") == "是"
+                    or is_german_battery(row.get("项目") or row.get("标准化项目名称"))
+                )
+            ):
+                category_review_reason = (
+                    "日期过滤后仅剩一条工单，但原始查询返回多条，"
+                    "品类明细无法安全关联到该工单，需人工复核"
+                )
+                row["是否已录单"] = "待复核"
+                row["匹配状态"] = "品类明细关联待复核"
+                row["_query_error"] = category_review_reason
+
+            audit_review_reason = category_review_reason or date_review_reason
+            self._apply_weee_category_audit(
+                row, date_candidates, query_status, review_reason=audit_review_reason
+            )
+            self._apply_battery_category_audit(
+                row, date_candidates, query_status, review_reason=audit_review_reason
+            )
             all_results.append(row)
             self.last_processed_rows.append(row)
             lookup_detail = row["查询方式"]
             if row["模糊查询词"]:
                 lookup_detail += f", 词={row['模糊查询词']}"
             self._log(
-                f"  → 查到 {len(orders)} 条工单 (查询状态={query_status}, "
+                f"  → 日期筛选后 {len(date_candidates)} 条候选 "
+                f"(原始返回 {len(raw_orders)} 条, 查询状态={query_status}, "
                 f"查询方式={lookup_detail})"
             )
             ok_results += 1
-            if not orders:
+            if not date_candidates:
                 empty_results += 1
 
             # 条目间间隔（最后一条不 sleep）
@@ -2835,13 +2941,9 @@ class WorkOrderChecker:
     ) -> List[Dict]:
         """按“查询返回条数”判定是否漏单。
 
-        查询条件本身已经是“公司 + 代理 + 项目（+ 国家）”的精确条件，平台返回的
-        条数就是最可靠的答案，因此：
-          - 返回 1 条 → 直接认定已录单，不再用本地模糊比对否决；
-          - 返回 ≥2 条 → 无法确定是哪一条，交人工排查；
-          - 返回 0 条 → 上游已按公司名做模糊重查，仍为 0 才判漏单。
-        本地四维比对（代理 / 客户 / 项目 / 日期）保留为**提示**，只写进匹配状态与
-        日期筛选说明，绝不推翻结论——否则本地字段写法差异会制造假漏单。
+        上游阶段二先把平台返回行按邮件日期窗口分为窗口内、窗口外和日期未知；
+        本函数只接收窗口内记录及需复核的日期未知记录。日期窗口外的工单不会参与
+        唯一性判定。公司、代理、项目字段仍作为本地核对提示，不因格式差异单独判漏。
         """
         results = []
         query_timestamp = datetime.now()
@@ -3003,6 +3105,31 @@ class WorkOrderChecker:
             or wo.get("创建时间") or wo.get("注册时间") or ""
         )
         return self._parse_date_value(date_value)
+
+    def _filter_workorders_by_date_window(self, workorders, date_window):
+        """Filter dated order rows against the inclusive email-date window.
+
+        Rows with missing/unparseable dates stay in the candidate set and are
+        returned separately so callers can require manual review rather than
+        silently discarding a possible match.
+        """
+        candidates = []
+        out_of_window = []
+        unknown_date = []
+        if not date_window:
+            return [], [], list(workorders or [])
+
+        start_date, end_date = date_window
+        for order in workorders or []:
+            order_date = self._parse_wo_date(order) if isinstance(order, dict) else None
+            if order_date is None:
+                candidates.append(order)
+                unknown_date.append(order)
+            elif start_date <= order_date.date() <= end_date:
+                candidates.append(order)
+            else:
+                out_of_window.append(order)
+        return candidates, out_of_window, unknown_date
 
     def _wo_order_date_raw(self, wo: Dict) -> str:
         """取平台返回的**原始**下单日期文本，不解析、不格式化。
