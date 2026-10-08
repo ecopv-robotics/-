@@ -1794,56 +1794,63 @@ class WorkOrderChecker:
     async def _click_query_button(self) -> bool:
         """点击查询按钮"""
         btn_selectors = self.selectors["query_button"]
+        button_found = False
+        click_errors = []
         for sel in btn_selectors:
             try:
                 btn = await self._page.wait_for_selector(sel, timeout=3000)
-                if btn:
-                    self._last_query_response_status = "unconfirmed"
-                    self._last_query_response_note = "点击后未捕获工单查询响应"
-                    response_task = asyncio.create_task(
-                        self._page.wait_for_response(
+            except Exception:
+                continue
+            if not btn:
+                continue
+            button_found = True
+            self._last_query_response_status = "unconfirmed"
+            self._last_query_response_note = "点击后未捕获工单查询响应"
+            clicked = False
+            try:
+                # Python Playwright 使用 expect_response 上下文；Page 没有
+                # wait_for_response。监听必须在点击前注册，以免漏掉快速响应。
+                async with self._page.expect_response(
                             lambda response: self._is_workorder_query_response(response),
                             timeout=max(
                                 1500,
                                 min(5000, int(self.table_refresh_timeout_seconds * 1000)),
                             ),
-                        )
-                    )
-                    try:
-                        await btn.click(timeout=self.field_timeout_ms)
-                    except Exception:
-                        response_task.cancel()
-                        raise
+                ) as response_info:
+                    await btn.click(timeout=self.field_timeout_ms)
+                    clicked = True
                     self._query_click_count += 1
                     self._log(f"点击查询按钮成功（实际点击累计 {self._query_click_count} 次）: {sel}")
-                    try:
-                        response = await response_task
-                        self._record_query_response(response)
-                    except Exception as exc:
-                        self._last_query_response_status = "unconfirmed"
-                        self._last_query_response_note = str(exc).splitlines()[0][:180]
-                        self._log(
-                            "查询按钮已点击，但未捕获工单查询接口响应；本条不读取旧表格",
-                            "warning",
-                        )
-                    # 工单页是 SPA，常驻连接可能永远达不到 networkidle；
-                    # 这里只把它当"能省则省"的加速窗口，超时（常态）不再刷
-                    # warning，真正的就绪判据交给 _wait_for_table_refresh。
-                    if self._last_query_response_status != "ok":
-                        try:
-                            await self._page.wait_for_load_state(
-                                "networkidle", timeout=min(self.timeout * 1000, 1500)
-                            )
-                        except Exception:
-                            pass
-                    # 固定 sleep(2) 已改为可配置的短沉降：指纹轮询会检测到
-                    # 表格刷新后立刻返回，渲染快时不必陪着睡满 2 秒。
-                    if self.query_click_settle_seconds:
-                        await asyncio.sleep(self.query_click_settle_seconds)
-                    return True
-            except Exception:
-                continue
-        self._log("未找到查询按钮", "error")
+                response = await response_info.value
+                self._record_query_response(response)
+            except Exception as exc:
+                reason = str(exc).splitlines()[0][:180] or type(exc).__name__
+                if not clicked:
+                    click_errors.append(f"{sel}: {reason}")
+                    continue
+                # 点击已发生，绝不能换选择器重试，否则一条记录可能重复查询。
+                self._last_query_response_status = "unconfirmed"
+                self._last_query_response_note = reason
+                self._log(
+                    f"查询按钮已点击，但未捕获工单查询接口响应：{reason}；本条不读取旧表格",
+                    "warning",
+                )
+            # SPA 常驻连接可能达不到 networkidle；真正的就绪判据由
+            # _wait_for_table_refresh 检查响应与表格刷新。
+            if self._last_query_response_status != "ok":
+                try:
+                    await self._page.wait_for_load_state(
+                        "networkidle", timeout=min(self.timeout * 1000, 1500)
+                    )
+                except Exception:
+                    pass
+            if self.query_click_settle_seconds:
+                await asyncio.sleep(self.query_click_settle_seconds)
+            return True
+        if button_found:
+            self._log(f"查询按钮已找到，但点击失败：{'；'.join(click_errors[:2])}", "error")
+        else:
+            self._log("未找到查询按钮", "error")
         return False
 
     @staticmethod
