@@ -41,6 +41,49 @@ def configure_batch_runtime(checker, search_one):
     checker._log = lambda *_args, **_kwargs: None
 
 
+class FakeRegistrationTabs:
+    def __init__(self, active, events, target=None):
+        self.active = active
+        self.events = events
+        self.target = target
+
+    def filter(self, has_text):
+        return FakeRegistrationTabs(self.active, self.events, has_text)
+
+    async def count(self):
+        return 1 if self.target else 2
+
+    @property
+    def first(self):
+        return self
+
+    def nth(self, index):
+        return FakeRegistrationTabs(
+            self.active, self.events, "工单列表" if index == 0 else "品类明细"
+        )
+
+    async def click(self):
+        self.active["tab"] = self.target or "工单列表"
+        self.events.append(("tab", self.active["tab"]))
+
+
+class FakeRegistrationPage:
+    def __init__(self, events, active=None):
+        self.events = events
+        self.active = active or {"tab": "工单列表"}
+
+    def locator(self, _selector):
+        return FakeRegistrationTabs(self.active, self.events)
+
+    async def evaluate(self, _script):
+        self.events.append(("read_table", self.active["tab"]))
+        return [{
+            "headers": ["品牌", "类别"],
+            "rows": [["Brand-A", "第五类"]],
+            "headerFound": True,
+        }]
+
+
 def test_exact_click_failure_does_not_read_previous_table():
     checker = make_checker()
     reads = []
@@ -176,6 +219,137 @@ def test_date_input_must_read_back_the_requested_value():
 
     assert asyncio.run(run_case(True)) is True
     assert asyncio.run(run_case(False)) is False
+
+
+def test_category_tab_reenters_dates_queries_then_restores_dates_on_list_tab():
+    checker = make_checker()
+    events = []
+    checker._page = FakeRegistrationPage(events)
+    checker.query_click_settle_seconds = 0
+    date_window = checker._email_date_window("2026-08-26")
+
+    async def fill_dates(window):
+        events.append(("dates", checker._page.active["tab"], window))
+        checker._last_date_filter_status = "网页已设置邮件日期前后1个月"
+        return True
+
+    async def fingerprint():
+        return "table-before-category-query"
+
+    async def click_query():
+        events.append(("query", checker._page.active["tab"]))
+        return True
+
+    async def wait_refresh(before):
+        events.append(("refresh", checker._page.active["tab"], before))
+        return True
+
+    checker._fill_order_date_window = fill_dates
+    checker._table_fingerprint = fingerprint
+    checker._click_query_button = click_query
+    checker._wait_for_table_refresh = wait_refresh
+    checker._rows_to_records = lambda _headers, rows: [
+        {"品牌": rows[0][0], "类别": rows[0][1]}
+    ]
+
+    records = asyncio.run(checker._extract_weee_category_detail_data(date_window))
+
+    assert records == [{"品牌": "Brand-A", "类别": "第五类"}]
+    assert checker._last_category_detail_status == "loaded"
+    assert events == [
+        ("tab", "品类明细"),
+        ("dates", "品类明细", date_window),
+        ("query", "品类明细"),
+        ("refresh", "品类明细", "table-before-category-query"),
+        ("read_table", "品类明细"),
+        ("tab", "工单列表"),
+        ("dates", "工单列表", date_window),
+    ]
+
+
+def test_category_tab_does_not_read_old_table_when_requery_refresh_fails():
+    checker = make_checker()
+    events = []
+    checker._page = FakeRegistrationPage(events)
+    checker.query_click_settle_seconds = 0
+    date_window = checker._email_date_window("2026-08-26")
+
+    async def fill_dates(window):
+        events.append(("dates", checker._page.active["tab"], window))
+        checker._last_date_filter_status = "网页已设置邮件日期前后1个月"
+        return True
+
+    async def fingerprint():
+        return "old category table"
+
+    async def click_query():
+        events.append(("query", checker._page.active["tab"]))
+        return True
+
+    async def no_refresh(_before):
+        events.append(("refresh_failed", checker._page.active["tab"]))
+        return False
+
+    checker._fill_order_date_window = fill_dates
+    checker._table_fingerprint = fingerprint
+    checker._click_query_button = click_query
+    checker._wait_for_table_refresh = no_refresh
+    checker._rows_to_records = lambda *_args: [
+        {"品牌": "STALE", "类别": "第五类"}
+    ]
+
+    records = asyncio.run(checker._extract_weee_category_detail_data(date_window))
+
+    assert records == []
+    assert checker._last_category_detail_status == "failed"
+    assert not any(event[0] == "read_table" for event in events)
+    assert events[-2:] == [
+        ("tab", "工单列表"),
+        ("dates", "工单列表", date_window),
+    ]
+
+
+def test_search_one_returns_to_list_and_refills_date_before_query():
+    checker = make_checker()
+    events = []
+    checker._page = FakeRegistrationPage(events, active={"tab": "品类明细"})
+    checker._debug_screenshot = lambda *_args, **_kwargs: asyncio.sleep(0)
+
+    async def fill(**kwargs):
+        events.append(("fill", checker._page.active["tab"], kwargs.get("mail_date")))
+        return True
+
+    async def fingerprint():
+        return "before-query"
+
+    async def click_query():
+        events.append(("query", checker._page.active["tab"]))
+        return True
+
+    async def wait_refresh(_before):
+        return True
+
+    async def extract():
+        checker._last_table_parse_status = "ok"
+        return [{"工单编号": "WO-1", "下单日期": "2026-08-26"}]
+
+    checker._fill_query_form = fill
+    checker._table_fingerprint = fingerprint
+    checker._click_query_button = click_query
+    checker._wait_for_table_refresh = wait_refresh
+    checker._extract_table_data = extract
+
+    result = asyncio.run(checker.search_one(
+        "示例科技有限公司", country="波兰", service_item="包装法",
+        mail_date="2026-08-26",
+    ))
+
+    assert len(result) == 1
+    assert events[:3] == [
+        ("tab", "工单列表"),
+        ("fill", "工单列表", "2026-08-26"),
+        ("query", "工单列表"),
+    ]
 
 
 def test_fuzzy_click_failure_does_not_read_exact_query_table_again():

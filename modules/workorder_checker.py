@@ -1011,6 +1011,52 @@ class WorkOrderChecker:
     def _registration_order_url(self) -> str:
         return urljoin(self.url, self.registration_order_path)
 
+    async def _activate_order_list_tab(self) -> bool:
+        """切回工单列表页签；页签切换会清空日期，调用方随后必须重填。"""
+        if self._page is None or not hasattr(self._page, "locator"):
+            return True
+        tabs = self._page.locator(
+            ".work-order-register-container .tab-header .tab-btn, .tab-header .tab-btn"
+        )
+        try:
+            count = await tabs.count()
+            if count < 2:
+                return True
+            list_tab = tabs.filter(has_text="工单列表")
+            if await list_tab.count():
+                await list_tab.first.click()
+            else:
+                await tabs.nth(0).click()
+            await asyncio.sleep(0.15)
+            self._log("已切回工单列表页签；查询前将重新填写全部条件和日期")
+            return True
+        except Exception as exc:
+            self._log(f"切回工单列表页签失败: {exc}", "warning")
+            return False
+
+    async def _query_current_tab_with_date_window(self, date_window, tab_name: str) -> bool:
+        """页签切换后重新填写日期并确认该页签的查询结果刷新。"""
+        if not date_window:
+            self._last_date_filter_status = f"{tab_name}页缺少有效日期范围"
+            self._log(self._last_date_filter_status, "warning")
+            return False
+        before = await self._table_fingerprint()
+        if not await self._fill_order_date_window(date_window):
+            self._log(f"{tab_name}页日期重新填写失败，未点击查询", "warning")
+            return False
+        self._log(
+            f"{tab_name}页签切换后已重新填写并确认日期范围："
+            f"{date_window[0].isoformat()}~{date_window[1].isoformat()}"
+        )
+        if not await self._click_query_button():
+            self._log(f"{tab_name}页日期已重填，但查询按钮点击失败", "warning")
+            return False
+        if not await self._wait_for_table_refresh(before):
+            self._log(f"{tab_name}页已点击查询，但未确认结果刷新", "warning")
+            return False
+        self._log(f"{tab_name}页日期查询已刷新确认")
+        return True
+
     async def _navigate_to_order_list(self) -> bool:
         """按“工单管理 → 注册工单”导航，并确认查询页才允许继续。"""
         if await self._is_registration_order_page():
@@ -1868,6 +1914,13 @@ class WorkOrderChecker:
         if customer_note:
             self._log(f"公司名称已清洗: {customer_note}", "warning")
 
+        # 从品类明细返回后，列表页的日期控件会被系统清空。每条查询前都
+        # 显式回到列表页签，再由 _fill_query_form 重填并校验日期。
+        if not await self._activate_order_list_tab():
+            self._last_query_status = "查询条件填写失败"
+            self._log(f"查询步骤 [{company}]：无法确认工单列表页签，未提交查询", "error")
+            return []
+
         # 代理别名只影响网页输入和缓存键，阶段一原始代理字段保持不变。
         query_agent = self._canonical_dropdown_value("所属代理", agent)
         date_window = self._email_date_window(mail_date)
@@ -2064,7 +2117,7 @@ class WorkOrderChecker:
                     self._log(f"模糊匹配也无结果: {company}", "warning")
 
             if (weee_category_scope or battery_category_scope) and workorders:
-                category_records = await self._extract_weee_category_detail_data()
+                category_records = await self._extract_weee_category_detail_data(date_window)
                 detail_state_key = "德国WEEE品类明细读取状态" if weee_category_scope else "德国电池法品类明细读取状态"
                 source_key = "德国WEEE品类明细来源" if weee_category_scope else "德国电池法品类明细来源"
                 if len(workorders) == 1 and isinstance(workorders[0], dict):
@@ -2428,7 +2481,7 @@ class WorkOrderChecker:
         )
         return records
 
-    async def _extract_weee_category_detail_data(self) -> List[Dict]:
+    async def _extract_weee_category_detail_data(self, date_window=None) -> List[Dict]:
         """读取注册工单页面的“品类明细”页签。
 
         该页签不是所有查询结果都提供；读不到时返回空列表，专项比对会显示
@@ -2463,6 +2516,15 @@ class WorkOrderChecker:
                 await tab_locator.nth(1).click()
             switched = True
             await asyncio.sleep(min(0.8, max(0.2, self.query_click_settle_seconds)))
+            if not await self._query_current_tab_with_date_window(
+                date_window, "品类明细"
+            ):
+                self._last_category_detail_note = (
+                    f"品类明细页日期筛选未重新设置或查询未确认："
+                    f"{self._last_date_filter_status}"
+                )
+                self._log(self._last_category_detail_note, "warning")
+                return []
             candidates = await self._page.evaluate(TABLE_EXTRACT_JS)
             candidates = [c for c in (candidates or []) if isinstance(c, dict)]
             if not candidates:
@@ -2501,15 +2563,16 @@ class WorkOrderChecker:
             return []
         finally:
             if switched:
-                try:
-                    list_tab = tab_locator.filter(has_text="工单列表")
-                    if await list_tab.count():
-                        await list_tab.first.click()
+                if await self._activate_order_list_tab():
+                    # 返回列表页会再次清空日期。此处先恢复界面状态；下一条
+                    # search_one 仍会重填完整查询条件、日期并实际点击查询。
+                    if date_window and await self._fill_order_date_window(date_window):
+                        self._log("返回工单列表后已重新填写并确认日期；下一条查询将重填条件后提交")
                     else:
-                        await tab_locator.nth(0).click()
-                    await asyncio.sleep(0.15)
-                except Exception:
-                    pass
+                        self._log("返回工单列表后日期未能恢复；下一条查询会因日期校验失败而停止", "warning")
+                else:
+                    self._last_category_detail_status = "failed"
+                    self._last_category_detail_note = "品类明细已读取，但无法返回工单列表页签"
 
     def _extract_country_from_project(self, project: str) -> str:
         """从项目名称中提取国家"""

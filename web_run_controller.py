@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
-BUILD = "2026.10.08-r4"
+BUILD = "2026.10.08-r5"
 UPLOAD_LIMIT = 20 * 1024 * 1024
 ROLES = {
     "agent": ("agent_table_path", "agent_emails", "data/agent_emails.xlsx"),
