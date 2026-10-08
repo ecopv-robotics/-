@@ -24,7 +24,7 @@ import re
 import time
 from datetime import date as date_type, datetime, timedelta
 from typing import Callable, List, Dict, Optional, Tuple
-from urllib.parse import parse_qs, urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from utils.fuzzy_match import fuzzy_match_pair, normalize_text, to_simplified
 from modules.weee_category_audit import compare_weee_categories
@@ -1038,21 +1038,18 @@ class WorkOrderChecker:
             return False
 
     async def _query_current_tab_with_date_window(self, date_window, tab_name: str) -> bool:
-        """页签切换后重新填写日期并确认该页签的查询结果刷新。"""
-        if not date_window:
-            self._last_date_filter_status = f"{tab_name}页缺少有效日期范围"
-            self._log(self._last_date_filter_status, "warning")
-            return False
+        """页签切换后尝试重填日期，再查询并确认结果刷新。"""
         before = await self._table_fingerprint()
-        if not await self._fill_order_date_window(date_window):
-            self._log(f"{tab_name}页日期重新填写失败，未点击查询", "warning")
-            return False
-        self._log(
-            f"{tab_name}页签切换后已重新填写并确认日期范围："
-            f"{date_window[0].isoformat()}~{date_window[1].isoformat()}"
-        )
+        if date_window:
+            if await self._fill_order_date_window(date_window):
+                self._log(f"{tab_name}页签切换后已尝试填写日期范围")
+            else:
+                self._log(f"{tab_name}页日期未能完整填写，继续点击查询", "warning")
+        else:
+            self._last_date_filter_status = f"{tab_name}页缺少有效日期范围，继续查询"
+            self._log(self._last_date_filter_status, "warning")
         if not await self._click_query_button():
-            self._log(f"{tab_name}页日期已重填，但查询按钮点击失败", "warning")
+            self._log(f"{tab_name}页查询按钮点击失败", "warning")
             return False
         if not await self._wait_for_table_refresh(before):
             self._log(f"{tab_name}页已点击查询，但未确认结果刷新", "warning")
@@ -1687,7 +1684,7 @@ class WorkOrderChecker:
         return False
 
     async def _fill_order_date_window(self, date_window) -> bool:
-        """填写下单开始/结束日期；控件未完整设置时拒绝继续查询。"""
+        """尝试填写下单开始/结束日期；失败只记录，不阻止查询。"""
         # 未完整选中并读回之前，不能把上一条记录的已提交窗口当成本条条件。
         self._expected_query_date_window = None
         self._last_query_response_status = None
@@ -1718,6 +1715,11 @@ class WorkOrderChecker:
             self._last_date_filter_status = "网页日期控件未找到，查询条件不完整"
         if not (from_ok and to_ok):
             self._log(self._last_date_filter_status, "warning")
+        # 日期弹层若仍打开，关闭它以免遮住后续查询按钮。
+        try:
+            await self._page.keyboard.press("Escape")
+        except Exception:
+            pass
         return from_ok and to_ok
 
     async def _clear_inputs(self):
@@ -1871,46 +1873,9 @@ class WorkOrderChecker:
             self._log(f"工单查询接口返回异常状态: {self._last_query_response_note}", "warning")
             return
 
-        expected = self._expected_query_date_window
-        if not expected:
-            self._last_query_response_status = "date_mismatch"
-            self._last_query_response_note = "本次点击前没有确认完整日期范围"
-            self._log(
-                f"工单查询未绑定有效日期窗口：{self._last_query_response_note}",
-                "error",
-            )
-            return
-        if expected:
-            params = parse_qs(urlsplit(str(response.url)).query)
-            request = getattr(response, "request", None)
-            try:
-                post_data = request.post_data or ""
-                if post_data:
-                    params.update(parse_qs(post_data))
-            except Exception:
-                pass
-            actual = (
-                (params.get("orderDateBegin") or [""])[0],
-                (params.get("orderDateEnd") or [""])[0],
-            )
-            if actual != expected:
-                self._last_query_response_status = "date_mismatch"
-                self._last_query_response_note = (
-                    f"预期={expected[0]}~{expected[1]}，"
-                    f"实际请求={actual[0] or '未传开始日期'}~"
-                    f"{actual[1] or '未传结束日期'}"
-                )
-                self._log(
-                    f"工单查询请求日期参数未生效：{self._last_query_response_note}",
-                    "error",
-                )
-                return
-
         self._last_query_response_status = "ok"
         self._last_query_response_note = f"{response_path} HTTP {status_code}"
-        self._log(
-            f"工单查询响应已确认：HTTP {status_code}，日期参数与当前邮件窗口一致"
-        )
+        self._log(f"工单查询响应已确认：HTTP {status_code}；不校验请求日期参数")
 
     async def _debug_screenshot(self, path: str) -> None:
         """过程截图（查询前/查询后）。
@@ -1964,14 +1929,11 @@ class WorkOrderChecker:
         """等到结果指纹变化并稳定，或确认加载状态结束且表格稳定。
 
         超时返回 False。相同表格内容且没有观察到加载状态时不能证明本次查询
-        更新过；但若已捕获本次 2xx 查询响应且请求日期与目标完全一致，
-        则允许相同结果在稳定后通过。
+        更新过；但若已捕获本次 2xx 查询响应，则允许相同结果在稳定后通过。
         """
-        if self._last_query_response_status in {
-            "date_mismatch", "http_error", "unconfirmed"
-        }:
+        if self._last_query_response_status in {"http_error", "unconfirmed"}:
             self._log(
-                f"查询响应不能证明本次日期筛选已生效："
+                f"查询响应未确认或异常，不能安全读取结果表："
                 f"{self._last_query_response_note}",
                 "warning",
             )
@@ -1992,8 +1954,8 @@ class WorkOrderChecker:
                     return True
                 last = current
             elif response_confirmed and current and not loading:
-                # 后端响应与日期窗口吻合；相同查询结果不会改变表格指纹，
-                # 因而以响应完成后的稳定表格作为刷新确认，避免误判旧数据。
+                # 相同查询结果不会改变表格指纹；以本次 2xx 响应后的
+                # 稳定表格作为刷新确认，避免误判旧数据。
                 if current == last:
                     return True
                 last = current
@@ -2061,17 +2023,14 @@ class WorkOrderChecker:
             if self.input_step_delay:
                 await asyncio.sleep(self.input_step_delay)
 
-        # 日期是工单查询的必需条件；只在本地过滤无法证明网页查询按日期执行，
-        # 因此缺日期或日期控件未完整填写时不得提交查询。
-        if mail_date is None:
-            self._last_date_filter_status = "邮件日期为空，查询条件不完整"
-            return False
+        # 日期只做尽力填写；未填上或读回不一致也继续提交查询。
         effective_date_window = date_window if date_window is not None else self._email_date_window(mail_date)
-        if not effective_date_window:
-            self._last_date_filter_status = "邮件日期无法解析，查询条件不完整"
-            return False
-        if not await self._fill_order_date_window(effective_date_window):
-            return False
+        if effective_date_window:
+            if not await self._fill_order_date_window(effective_date_window):
+                self._log("网页日期未能完整填写，继续提交查询", "warning")
+        else:
+            self._last_date_filter_status = "无有效邮件日期窗口，未设置网页日期筛选"
+            self._log(self._last_date_filter_status, "warning")
         if self.input_step_delay:
             await asyncio.sleep(self.input_step_delay)
         return True
@@ -2112,7 +2071,7 @@ class WorkOrderChecker:
             self._log(f"公司名称已清洗: {customer_note}", "warning")
 
         # 从品类明细返回后，列表页的日期控件会被系统清空。每条查询前都
-        # 显式回到列表页签，再由 _fill_query_form 重填并校验日期。
+        # 显式回到列表页签，再由 _fill_query_form 尝试重填日期。
         if not await self._activate_order_list_tab():
             self._last_query_status = "查询条件填写失败"
             self._log(f"查询步骤 [{company}]：无法确认工单列表页签，未提交查询", "error")
@@ -2766,7 +2725,7 @@ class WorkOrderChecker:
                     if date_window and await self._fill_order_date_window(date_window):
                         self._log("返回工单列表后已重新填写并确认日期；下一条查询将重填条件后提交")
                     else:
-                        self._log("返回工单列表后日期未能恢复；下一条查询会因日期校验失败而停止", "warning")
+                        self._log("返回工单列表后日期未能恢复；下一条查询仍会尝试填写并继续", "warning")
                 else:
                     self._last_category_detail_status = "failed"
                     self._last_category_detail_note = "品类明细已读取，但无法返回工单列表页签"
