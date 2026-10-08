@@ -788,8 +788,22 @@ class ExcelWriter:
                 class_value = str(
                     item.get("category_class_name") or item.get("category_class") or ""
                 ).strip()
-                if category == "德国电池法" and category_value and class_value:
-                    german_classes.append(f"{category_value}（{class_value}）")
+                if category == "德国电池法":
+                    classification_source = f"{category_value} {class_value}"
+                    numbered_class = next(
+                        (
+                            label
+                            for label in ("第一类", "第二类", "第三类", "第四类", "第五类")
+                            if label in classification_source
+                        ),
+                        "",
+                    )
+                    if numbered_class:
+                        german_classes.append(numbered_class)
+                    elif "设备电池" in classification_source:
+                        german_classes.append("设备电池")
+                    else:
+                        german_classes.append(class_value or category_value)
                 else:
                     german_classes.append(class_value or category_value)
 
