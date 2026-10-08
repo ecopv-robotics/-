@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import threading
+import tempfile
 import zipfile
 from collections import deque
 from datetime import date, datetime, timedelta
@@ -31,6 +32,52 @@ def atomic_text(path: Path, text: str):
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(text, encoding="utf-8")
     os.replace(temporary, path)
+
+
+def save_config_text(path: Path, text: str):
+    """保存本机配置；若 Windows 文件句柄阻止替换，则安全回退为原位写入。"""
+    try:
+        atomic_text(path, text)
+        return
+    except PermissionError:
+        # 某些本机进程会以不允许 delete-sharing 的方式打开 config.yaml，
+        # 此时同目录原子替换失败，但文件仍允许写入。先在系统临时目录备份，
+        # 写后校验；失败时恢复原字节，恢复也失败则保留备份供人工恢复。
+        original = path.read_bytes()
+        fd, backup_name = tempfile.mkstemp(prefix="ecopv-config-recovery-", suffix=".bak")
+        backup = Path(backup_name)
+        keep_backup = False
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(original)
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                with path.open("r+b") as target:
+                    target.seek(0)
+                    target.write(text.encode("utf-8"))
+                    target.truncate()
+                    target.flush()
+                    os.fsync(target.fileno())
+                persisted = yaml.safe_load(path.read_text(encoding="utf-8"))
+                if not isinstance(persisted, dict) or persisted != yaml.safe_load(text):
+                    raise OSError("配置写入后为空")
+            except Exception as write_error:
+                try:
+                    with path.open("r+b") as target, backup.open("rb") as source:
+                        target.seek(0)
+                        target.write(source.read())
+                        target.truncate()
+                        target.flush()
+                        os.fsync(target.fileno())
+                except Exception:
+                    keep_backup = True
+                    raise OSError("配置写入失败，自动恢复失败；恢复副本已保留在系统临时目录") from write_error
+                raise
+        finally:
+            if not keep_backup:
+                backup.unlink(missing_ok=True)
+                path.with_name(path.name + ".tmp").unlink(missing_ok=True)
 
 
 def load_json(path):
@@ -280,7 +327,7 @@ class RunController:
                             or host in {"example.com", "example.org", "example.net"}):
                         raise ValueError("请输入可访问的工单系统网址（http 或 https）")
                 config.setdefault(section, {})[field] = value.strip() if field != "password" else value
-            atomic_text(self.config_path, yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
+            save_config_text(self.config_path, yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
             self.config = config
             return {"ok": True, "message": "账号配置已保存；未填写的密码保持不变"}
 
