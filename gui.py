@@ -946,6 +946,7 @@ class WorkerThread(QThread):
         ocr_fallback = self.config.get("ocr", {}).get("fallback", True)
         extractor = FieldExtractor(agent_map, project_table, logger, llm_client,
                                    ocr_fallback=ocr_fallback)
+        agent_alias_index = getattr(extractor, "_agent_alias_index", {})
         all_rows = []
         mail_blocks = []   # 每封邮件的提取行，用于后续「同封邮件内」去重与语义校验分组
         for idx, mail in enumerate(valid_mails, 1):
@@ -1077,7 +1078,7 @@ class WorkerThread(QThread):
         from modules.business_validator import apply_row_guard
         guarded_count = 0
         for row in normalized_rows:
-            if apply_row_guard(row):
+            if apply_row_guard(row, agent_alias_index=agent_alias_index):
                 guarded_count += 1
         if guarded_count:
             logger.warning(f"确定性业务校验标记 {guarded_count} 行进入人工复核")
@@ -1112,7 +1113,7 @@ class WorkerThread(QThread):
             # LLM 可能选择候选公司或改写字段；重新执行确定性闸门，确保代理被
             # 抽成客户、项目仍无法匹配等风险不会因模型返回 valid 而被晋级。
             post_review_guarded = sum(
-                bool(apply_row_guard(row)) for row in normalized_rows
+                bool(apply_row_guard(row, agent_alias_index=agent_alias_index)) for row in normalized_rows
             )
             if post_review_guarded:
                 logger.warning(f"语义复检后确定性校验仍标记 {post_review_guarded} 行需人工复核")

@@ -1,5 +1,6 @@
 """模型结构校验之后的确定性业务风险检查。"""
 import re
+import unicodedata
 from typing import Dict, List
 
 
@@ -36,16 +37,39 @@ _CONTACT_OR_ID_RE = re.compile(r"^[+()\-\s\d]{6,}$")
 _COMPANY_CODE_ONLY_RE = re.compile(r"^[A-Za-z]{1,8}[-_]?\d{4,}$")
 
 
-def inspect_row(row: Dict) -> List[dict]:
+def _identity_key(value: str) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return re.sub(r"[\W_]+", "", text, flags=re.UNICODE)
+
+
+def _company_matches_agent_alias(company: str, agent: str, alias_index: Dict = None) -> bool:
+    """Match cross-language/short agent aliases without guessing a new company name."""
+    company_key, agent_key = _identity_key(company), _identity_key(agent)
+    if not company_key or not agent_key:
+        return False
+    company_identities, agent_identities = {company_key}, {agent_key}
+    if isinstance(alias_index, dict):
+        for alias, officials in alias_index.items():
+            alias_key = _identity_key(alias)
+            if not alias_key:
+                continue
+            if alias_key == company_key:
+                names = officials if isinstance(officials, (list, tuple, set)) else [officials]
+                company_identities.update(_identity_key(name) for name in names if _identity_key(name))
+            if alias_key == agent_key:
+                names = officials if isinstance(officials, (list, tuple, set)) else [officials]
+                agent_identities.update(_identity_key(name) for name in names if _identity_key(name))
+    return bool(company_identities & agent_identities)
+
+
+def inspect_row(row: Dict, agent_alias_index: Dict = None) -> List[dict]:
     """只拦截高确定性的明显异常，不猜测或改写业务字段。"""
     issues: List[dict] = []
     def add_issue(field: str, code: str, reason: str) -> None:
         issues.append({"field": field, "code": code, "reason": reason})
 
     company = str(row.get("客户", "") or "").strip()
-    normalized_company = re.sub(r"[\s\-_]+", "", company).lower()
     agent = str(row.get("代理", "") or "").strip()
-    normalized_agent = re.sub(r"[\s\-_]+", "", agent).lower()
 
     if not company:
         add_issue("company", "FIELD_MISSING", "客户公司名称为空")
@@ -75,8 +99,8 @@ def inspect_row(row: Dict) -> List[dict]:
         add_issue("company", "COMPANY_CODE_MIXED", "客户字段混入项目/证书类型或客户编号")
     elif re.search(r"(?:不能|不可|不得|不要).{0,8}(?:其它|其他)?公司", company):
         add_issue("company", "COMPANY_FORM_NOTE", "客户字段是表单说明句，不是真实公司名称")
-    elif normalized_agent and normalized_company == normalized_agent:
-        add_issue("company", "COMPANY_EQUALS_AGENT", "客户公司与代理名称完全相同，可能误把代理提取为客户")
+    elif _company_matches_agent_alias(company, agent, agent_alias_index):
+        add_issue("company", "COMPANY_EQUALS_AGENT", "客户公司命中代理名称或其已配置别名，可能误把代理提取为客户")
 
     project = str(row.get("项目", "") or "").strip()
     if not project:
@@ -93,9 +117,9 @@ def inspect_row(row: Dict) -> List[dict]:
     return issues
 
 
-def apply_row_guard(row: Dict) -> List[dict]:
+def apply_row_guard(row: Dict, agent_alias_index: Dict = None) -> List[dict]:
     """标记人工复核，但绝不自动改写原始提取值。"""
-    issues = inspect_row(row)
+    issues = inspect_row(row, agent_alias_index=agent_alias_index)
     if not issues:
         row["业务规则校验状态"] = "通过"
         row["业务规则问题"] = ""
