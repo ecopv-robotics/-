@@ -1,6 +1,6 @@
 """M6 Excel 输出模块 — 生成双 Excel 表格（漏单清单 + 过滤清单）"""
-import os
 import json
+import os
 from datetime import datetime
 from typing import List, Dict
 
@@ -303,7 +303,7 @@ class ExcelWriter:
         self, all_rows: List[Dict], to_query: List[Dict], skipped: List[Dict] = None
     ) -> tuple:
         """
-        阶段二输出 workorder_check_result.xlsx — 包含原始邮件信息 + 工单查询结果 + 跳过条目标注
+        阶段二输出 workorder_check_result.xlsx — 仅包含业务字段、核对状态和失败原因
         返回 (可用产物路径, 时序副本路径)；稳定名被 Excel 占用时第一个元素是时序副本。
         """
         stable, ts = self._stable_and_timestamp(
@@ -685,8 +685,7 @@ class ExcelWriter:
         return []
 
     @staticmethod
-    def _workorder_country(row: Dict, project: str, weee_items: List[Dict],
-                           battery_items: List[Dict]) -> str:
+    def _workorder_country(row: Dict, project: str, battery_items: List[Dict]) -> str:
         country = str(row.get("国家") or "").strip()
         if country:
             return country
@@ -718,7 +717,7 @@ class ExcelWriter:
         project = str(row.get("项目") or row.get("标准化项目名称") or "").strip()
         weee_items = cls._workorder_json_items(row.get("德国WEEE品类明细"))
         battery_items = cls._workorder_json_items(row.get("德国电池法品类明细"))
-        country = cls._workorder_country(row, project, weee_items, battery_items)
+        country = cls._workorder_country(row, project, battery_items)
         is_germany = country == "德国" or "德国" in project
         if not is_germany:
             return [("其他项目", project, country, weee_items + battery_items)]
