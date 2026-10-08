@@ -411,7 +411,7 @@ class ExcelWriter:
             "语义校验状态", "语义问题编号", "语义问题字段", "语义问题证据", "语义当前值", "语义建议值", "语义校验建议", "语义校验原因", "语义校验模型",
             "字段LLM状态", "字段LLM失败原因", "业务规则校验状态", "业务规则问题编号", "业务规则问题",
             "附件证据", "邮件正文原文", "附件文件索引",
-            "德国WEEE专项", "德国WEEE品类明细", "德国WEEE品类状态", "德国WEEE品类核对", "德国WEEE专项说明",
+            "德国WEEE专项", "德国WEEE品类明细", "德国WEEE品类状态", "德国WEEE品类核对", "德国WEEE专项说明", "德国电池法品类明细",
         ]
 
         for col, header in enumerate(headers, 1):
@@ -473,6 +473,7 @@ class ExcelWriter:
                 row.get("德国WEEE品类状态", ""),
                 row.get("德国WEEE品类核对", ""),
                 row.get("德国WEEE专项说明", ""),
+                row.get("德国电池法品类明细", ""),
             ]
             for col, val in enumerate(values, 1):
                 cell = ws.cell(row=row_idx, column=col, value=val)
@@ -512,7 +513,7 @@ class ExcelWriter:
             "语义校验状态", "语义问题编号", "语义问题字段", "语义问题证据", "语义当前值", "语义建议值", "语义校验建议", "语义校验原因", "语义校验模型",
             "字段LLM状态", "字段LLM失败原因", "业务规则校验状态", "业务规则问题编号", "业务规则问题",
             "附件证据", "邮件正文原文", "附件文件索引",
-            "德国WEEE专项", "德国WEEE品类明细", "德国WEEE品类状态", "德国WEEE品类核对", "德国WEEE专项说明",
+            "德国WEEE专项", "德国WEEE品类明细", "德国WEEE品类状态", "德国WEEE品类核对", "德国WEEE专项说明", "德国电池法品类明细",
         ]
 
         for col, header in enumerate(headers, 1):
@@ -588,6 +589,7 @@ class ExcelWriter:
                 row.get("德国WEEE品类状态", ""),
                 row.get("德国WEEE品类核对", ""),
                 row.get("德国WEEE专项说明", ""),
+                row.get("德国电池法品类明细", ""),
             ]
             for col, val in enumerate(values, 1):
                 cell = ws.cell(row=row_idx, column=col, value=val)
@@ -674,7 +676,7 @@ class ExcelWriter:
             "是否已录单", "工单日期", "下单日期", "匹配状态",
             "RPA查询状态", "查询方式", "模糊查询词", "跳过后说明", "查询时间戳",
             "邮件日期筛选范围", "日期筛选说明",
-            "德国WEEE专项", "德国WEEE品类明细", "德国WEEE品类状态", "德国WEEE品类核对", "德国WEEE专项说明",
+            "德国WEEE专项", "德国WEEE品类明细", "德国WEEE品类状态", "德国WEEE品类核对", "德国WEEE专项说明", "德国电池法品类明细",
         ]
 
         for col, header in enumerate(headers, 1):
@@ -718,6 +720,7 @@ class ExcelWriter:
                     q.get("德国WEEE品类状态", ""),
                     q.get("德国WEEE品类核对", ""),
                     q.get("德国WEEE专项说明", ""),
+                    q.get("德国电池法品类明细", ""),
                 ]
             elif id(row) in skipped_by_id:
                 s = skipped_by_id[id(row)]
@@ -747,6 +750,7 @@ class ExcelWriter:
                     s.get("德国WEEE品类状态", ""),
                     s.get("德国WEEE品类核对", ""),
                     s.get("德国WEEE专项说明", ""),
+                    s.get("德国电池法品类明细", ""),
                 ]
             else:
                 # 阶段二中途停止/异常时，保留原始待查行并明确标记未执行，
@@ -777,6 +781,7 @@ class ExcelWriter:
                     row.get("德国WEEE品类状态", ""),
                     row.get("德国WEEE品类核对", ""),
                     row.get("德国WEEE专项说明", ""),
+                    row.get("德国电池法品类明细", ""),
                 ]
             for col, val in enumerate(values, 1):
                 cell = ws.cell(row=row_idx, column=col, value=val)

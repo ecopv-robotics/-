@@ -3,13 +3,92 @@ import json
 import pytest
 from openpyxl import Workbook, load_workbook
 
-from modules.battery_review import battery_review, normalize_battery_items
+from modules.battery_review import (battery_review, classify_battery_category,
+                                    extract_battery_items, normalize_battery_items)
 from workbench_server import WorkbenchStore, _detail_confirmation_ready
 
 
 def item(item_id="B1", brand="Example"):
     return {"item_id": item_id, "brand": brand, "category": "Original battery type",
             "category_class": "Manual battery class"}
+
+
+@pytest.mark.parametrize("filename,expected", [
+    ("GRS_Anlage_FZG 电动汽车电池.pdf", "汽车电池"),
+    ("LV 轻型交通工具电池合同.pdf", "轻型交通工具电池"),
+    ("STB 汽车启动电池合同.pdf", "启动电池"),
+    ("NB_BESS 工业电池合同.pdf", "工业电池"),
+    ("设备电池申请表.xlsx", "设备电池"),
+])
+def test_battery_five_classes_from_specific_evidence(filename, expected):
+    assert classify_battery_category(filename) == expected
+
+
+def test_generic_ofh_contract_only_gives_unconfirmed_equipment_candidate():
+    result = extract_battery_items(project="德国电池法", attachments=[{
+        "filename": "Vertrag_OfH合同.pdf",
+        "text_content": "Gerätebatterien Starterbatterien LV-Batterien Elektrofahrzeugbatterien Industriebatterien",
+    }])
+    assert len(result["items"]) == 1
+    assert result["items"][0]["category_class"] == "设备电池"
+    assert result["items"][0]["confidence"] == "low"
+    assert not result["items"][0]["battery_confirmed"]
+
+
+def test_archive_member_contracts_are_kept_as_separate_battery_classes():
+    result = extract_battery_items(project="德国电池法", attachments=[{
+        "filename": "资料包.zip",
+        "text_content": "[contracts/STB 汽车启动电池合同.pdf] Anlage STB\n"
+                        "[contracts/NB_BESS 工业电池合同.pdf] Anlage INB BESS",
+    }])
+    assert [item["category_class"] for item in result["items"]] == ["启动电池", "工业电池"]
+
+
+def test_mixed_weee_and_battery_stay_separate_by_project_and_company():
+    attachments = [{"filename": "mixed.xlsx", "structured_records": [
+        {"customer": "甲甲科技有限公司", "sheet_name": "德国WEEE", "brand": "WEEEBrand", "category": "小型设备"},
+        {"customer": "甲甲科技有限公司", "sheet_name": "德国电池法", "brand": "BatteryBrand", "category": "设备电池"},
+        {"customer": "乙乙科技有限公司", "sheet_name": "德国电池法", "brand": "OtherBrand", "category": "工业电池"},
+    ]}]
+    result = extract_battery_items(project="德国电池法", company="甲甲科技有限公司", attachments=attachments)
+    assert [(item["brand"], item["category_class"]) for item in result["items"]] == [("BatteryBrand", "设备电池")]
+
+
+def test_battery_form_section_reads_selected_value_but_not_weee_section():
+    attachment = {"filename": "甲甲科技有限公司-EPR申请表.xlsx", "sheets": [{"sheet_name": "申请表", "preview_rows": [
+        {"row_number": 1, "cells": ["公司中文名称", "甲甲科技有限公司"]},
+        {"row_number": 2, "cells": ["WEEE产品信息"]},
+        {"row_number": 3, "cells": ["类别", "品牌"]},
+        {"row_number": 4, "cells": ["小型设备", "WEEEBrand"]},
+        {"row_number": 5, "cells": ["电池产品信息"]},
+        {"row_number": 6, "cells": ["类别", "品牌"]},
+        {"row_number": 7, "cells": ["工业电池", "BatteryBrand"]},
+    ]}]}
+    result = extract_battery_items(project="德国电池法", company="甲甲科技有限公司", attachments=[attachment])
+    assert [(item["brand"], item["category"]) for item in result["items"]] == [("BatteryBrand", "工业电池")]
+
+
+def test_manual_confirmation_keeps_original_evidence():
+    original = extract_battery_items(project="德国电池法", attachments=[{"filename": "STB 汽车启动电池合同.pdf"}])["items"][0]
+    confirmed = normalize_battery_items([{**original, "brand": "DemoBrand"}], confirm_id=original["item_id"])
+    assert confirmed[0]["battery_confirmed"]
+    assert confirmed[0]["source"] == "附件合同名称"
+    assert "STB" in confirmed[0]["evidence"]
+
+
+def test_stage1_row_contains_battery_items_from_contract():
+    from modules.field_extractor import FieldExtractor
+    rows = FieldExtractor({}, [], ocr_fallback=False).extract_fields({
+        "subject": "甲甲科技有限公司德国电池法注册",
+        "body_text": "请办理德国电池法注册",
+        "attachments": [{"filename": "甲甲科技有限公司-STB 汽车启动电池合同.pdf"}],
+    })
+    battery_rows = [row for row in rows if row.get("项目") == "德国电池法"]
+    assert len(battery_rows) == 1
+    items = json.loads(battery_rows[0]["德国电池法品类明细"])
+    assert len(items) == 1
+    assert items[0]["category_class"] == "启动电池"
+    assert not items[0]["battery_confirmed"]
 
 
 def make_store(tmp_path):

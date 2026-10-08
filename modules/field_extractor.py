@@ -16,6 +16,7 @@ from typing import List, Dict, Set, Optional
 from utils.fuzzy_match import fuzzy_search, fuzzy_match_pair, normalize_text
 from modules.project_normalizer import COUNTRIES
 from modules.weee_category_audit import extract_weee_items
+from modules.battery_review import extract_battery_items
 
 
 class FieldExtractor:
@@ -545,6 +546,13 @@ class FieldExtractor:
             company=customer_result.get("customer", ""),
         )
         weee_items = weee.get("items") or []
+        battery = extract_battery_items(
+            subject=subject,
+            body=mail.get("body_original") or body,
+            attachments=mail.get("attachments") or [],
+            project=project,
+            company=customer_result.get("customer", ""),
+        )
         return {
             "sender_email": mail.get("sender_email", ""),
             "sender_name": mail.get("sender_name", ""),
@@ -597,6 +605,7 @@ class FieldExtractor:
             ) if weee.get("enabled") else "",
             "德国WEEE字段提取方式": weee.get("extraction_method", "规则提取") if weee.get("enabled") else "",
             "德国WEEE字段复检": json.dumps(weee.get("llm_review") or {}, ensure_ascii=False, separators=(",", ":")) if weee.get("enabled") else "",
+            "德国电池法品类明细": json.dumps(battery.get("items") or [], ensure_ascii=False, separators=(",", ":")) if battery.get("enabled") else "",
             "置信度": confidence,
             "match_candidates": agent_result.get("candidates", []),
             "llm_used": llm_used,
