@@ -1,5 +1,6 @@
 """M6 Excel 输出模块 — 生成双 Excel 表格（漏单清单 + 过滤清单）"""
 import os
+import json
 from datetime import datetime
 from typing import List, Dict
 
@@ -666,168 +667,201 @@ class ExcelWriter:
         self._log(f"过滤日志: {stable_path} ({len(filtered_mails)} 行)")
         return stable_path
 
+    @staticmethod
+    def _workorder_json_items(value) -> List[Dict]:
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            return [value]
+        if isinstance(value, str) and value.strip():
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return [item for item in parsed if isinstance(item, dict)]
+                if isinstance(parsed, dict):
+                    return [parsed]
+            except (TypeError, ValueError):
+                pass
+        return []
+
+    @staticmethod
+    def _workorder_country(row: Dict, project: str, weee_items: List[Dict],
+                           battery_items: List[Dict]) -> str:
+        country = str(row.get("国家") or "").strip()
+        if country:
+            return country
+        if str(row.get("德国WEEE专项") or "").strip() == "是" or battery_items:
+            return "德国"
+        for candidate in (
+            "德国", "法国", "意大利", "西班牙", "荷兰", "波兰", "瑞典", "比利时",
+            "爱尔兰", "葡萄牙", "奥地利", "英国", "匈牙利", "捷克", "丹麦", "芬兰",
+            "挪威", "罗马尼亚", "保加利亚", "希腊", "克罗地亚",
+        ):
+            if candidate in project:
+                return candidate
+        return ""
+
+    @staticmethod
+    def _unique_text(values: List[str]) -> str:
+        result = []
+        seen = set()
+        for value in values:
+            text = str(value or "").strip()
+            key = text.casefold()
+            if text and key not in seen:
+                seen.add(key)
+                result.append(text)
+        return "、".join(result)
+
+    @classmethod
+    def _workorder_result_groups(cls, row: Dict) -> List[tuple]:
+        project = str(row.get("项目") or row.get("标准化项目名称") or "").strip()
+        weee_items = cls._workorder_json_items(row.get("德国WEEE品类明细"))
+        battery_items = cls._workorder_json_items(row.get("德国电池法品类明细"))
+        country = cls._workorder_country(row, project, weee_items, battery_items)
+        is_germany = country == "德国" or "德国" in project
+        if not is_germany:
+            return [("其他项目", project, country, weee_items + battery_items)]
+
+        has_weee = (
+            "WEEE" in project.upper()
+            or str(row.get("德国WEEE专项") or "").strip() == "是"
+            or bool(weee_items)
+        )
+        has_battery = "电池" in project or bool(battery_items)
+        groups = []
+        if has_weee:
+            groups.append(("德国WEEE", project or "德国WEEE", country, weee_items))
+        if has_battery:
+            groups.append(("德国电池法", project or "德国电池法", country, battery_items))
+        if groups:
+            return groups
+        return [("其他项目", project, country, weee_items + battery_items)]
+
+    @classmethod
+    def _workorder_success_and_reason(cls, row: Dict, state: str) -> tuple:
+        found = str(row.get("是否已录单") or "").strip()
+        match_status = str(row.get("匹配状态") or "").strip()
+        rpa_status = str(row.get("RPA查询状态") or "").strip()
+        query_error = str(row.get("_query_error") or "").strip()
+        skip_reason = str(row.get("_skip_reason") or "").strip()
+        date_note = str(row.get("日期筛选说明") or "").strip()
+
+        if state == "skipped":
+            return "否", skip_reason or query_error or match_status or "前置校验未通过，跳过查询"
+        if state == "pending":
+            return "否", query_error or "本次批次尚未执行到此条"
+        if any(token in rpa_status for token in ("失败", "错误", "未执行", "未查询", "跳过")):
+            return "否", query_error or skip_reason or match_status or rpa_status
+        if "多匹配" in match_status or "人工排查" in match_status:
+            return "否", "查询返回多条候选，无法唯一核对，需人工复核"
+        if "日期异常" in match_status:
+            return "否", date_note or "工单日期异常，需人工复核"
+        if found == "是":
+            return "是", ""
+        if found == "否":
+            return "否", query_error or match_status or "未查到匹配工单"
+        if found in {"待复核", "未比对", "未查询"}:
+            return "否", query_error or skip_reason or match_status or "核对结果尚未确认"
+        if match_status in {"精确匹配", "唯一匹配", "已录单"}:
+            return "是", ""
+        return "否", query_error or skip_reason or match_status or rpa_status or "核对结果未明确"
+
+    @classmethod
+    def _workorder_export_values(cls, row: Dict, state: str) -> List[List[str]]:
+        project = str(row.get("项目") or row.get("标准化项目名称") or "").strip()
+        request = str(row.get("需求") or "").strip()
+        agent = str(row.get("代理") or "").strip()
+        company = str(row.get("客户") or row.get("客户公司名称") or "").strip()
+        success, failure_reason = cls._workorder_success_and_reason(row, state)
+        outputs = []
+
+        for category, business_project, country, items in cls._workorder_result_groups(row):
+            brands = [str(item.get("brand") or item.get("品牌") or "") for item in items]
+            if not brands:
+                raw_brand = row.get("品牌") or row.get("品牌名称") or ""
+                brands = raw_brand if isinstance(raw_brand, list) else [str(raw_brand)]
+
+            german_classes = []
+            for item in items:
+                category_value = str(item.get("category") or item.get("category_name") or "").strip()
+                class_value = str(
+                    item.get("category_class_name") or item.get("category_class") or ""
+                ).strip()
+                if category == "德国电池法" and category_value and class_value:
+                    german_classes.append(f"{category_value}（{class_value}）")
+                else:
+                    german_classes.append(class_value or category_value)
+
+            business = business_project
+            if request:
+                business = f"{business} - {request}" if business else request
+            outputs.append([
+                category,
+                agent,
+                country,
+                business,
+                company,
+                cls._unique_text(brands),
+                cls._unique_text(german_classes),
+                success,
+                failure_reason,
+            ])
+        return outputs
+
     def _do_write_workorder_check(self, all_rows: List[Dict], to_query: List[Dict],
                                    skipped: List[Dict] = None):
-        """workorder_check_result.xlsx — 阶段二完整输出含跳过说明。
-
-        只负责构建工作簿，保存交给调用方（_save_pair），便于统一处理
-        稳定名被 Excel 占用时的降级。
-        """
+        """阶段二简明结果：只保留业务字段、核对是否成功和失败原因。"""
         wb = Workbook()
         ws = wb.active
         ws.title = "工单核对"
-
         headers = [
-            "发件人邮箱", "发件日期", "邮件主题", "正文(精简)",
-            "代理", "客户", "标准化项目", "需求", "置信度",
-            "是否已录单", "工单日期", "下单日期", "匹配状态",
-            "RPA查询状态", "查询方式", "模糊查询词", "跳过后说明", "查询时间戳",
-            "邮件日期筛选范围", "日期筛选说明",
-            "德国WEEE专项", "德国WEEE品类明细", "德国WEEE品类状态", "德国WEEE品类核对", "德国WEEE专项说明", "德国电池法品类明细", "德国电池法品类状态", "德国电池法品类核对",
+            "类别", "代理", "国家", "具体业务", "公司名称", "品牌", "德国分类",
+            "是否成功", "失败原因",
         ]
-
-        for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=header)
+        ws.append(headers)
+        for cell in ws[1]:
             cell.fill = COLOR_HEADER_FILL
             cell.font = COLOR_HEADER_FONT
             cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.border = THIN_BORDER
 
-        # 已查: 写入to_query的数据 + 查询结果
-        queried = {id(r): r for r in to_query}
-        skipped_by_id = {id(s): s for s in (skipped or [])}
+        queried = {id(row) for row in (to_query or [])}
+        skipped_ids = {id(row) for row in (skipped or [])}
+        column_widths = [16, 20, 14, 38, 32, 30, 36, 12, 52]
 
-        for row_idx, row in enumerate(all_rows, 2):
+        output_row = 2
+        for row in all_rows:
             if id(row) in queried:
-                q = queried[id(row)]
-                values = [
-                    q.get("sender_email", ""),
-                    self._format_date(q.get("date")),
-                    q.get("subject", ""),
-                    (q.get("body_text", "") or "")[:200],
-                    q.get("代理", ""),
-                    q.get("客户", ""),
-                    q.get("项目", ""),
-                    q.get("需求", ""),
-                    q.get("置信度", ""),
-                    q.get("是否已录单", ""),
-                    # 工单日期 = 邮件发来的日期；平台那列写在「下单日期」
-                    self._format_date(q.get("工单日期") or q.get("date")),
-                    q.get("下单日期", ""),
-                    q.get("匹配状态", ""),
-                    q.get("RPA查询状态", "已查询"),
-                    q.get("查询方式", ""),
-                    q.get("模糊查询词", ""),
-                    q.get("_query_error", ""),
-                    self._format_date(q.get("查询时间戳")),
-                    q.get("邮件日期筛选范围", ""),
-                    q.get("日期筛选说明", ""),
-                    q.get("德国WEEE专项", ""),
-                    q.get("德国WEEE品类明细", ""),
-                    q.get("德国WEEE品类状态", ""),
-                    q.get("德国WEEE品类核对", ""),
-                    q.get("德国WEEE专项说明", ""),
-                    q.get("德国电池法品类明细", ""),
-                    q.get("德国电池法品类状态", ""),
-                    q.get("德国电池法品类核对", ""),
-                ]
-            elif id(row) in skipped_by_id:
-                s = skipped_by_id[id(row)]
-                values = [
-                    s.get("sender_email", ""),
-                    self._format_date(s.get("date")),
-                    s.get("subject", ""),
-                    (s.get("body_text", "") or "")[:200],
-                    s.get("代理", ""),
-                    s.get("客户", ""),
-                    s.get("项目", ""),
-                    s.get("需求", ""),
-                    s.get("置信度", ""),
-                    "未查询",
-                    self._format_date(s.get("工单日期") or s.get("date")),
-                    "",
-                    "前置校验跳过",
-                    "跳过",
-                    s.get("查询方式", "未查询"),
-                    s.get("模糊查询词", ""),
-                    s.get("_skip_reason", ""),
-                    "",
-                    s.get("邮件日期筛选范围", ""),
-                    s.get("日期筛选说明", ""),
-                    s.get("德国WEEE专项", ""),
-                    s.get("德国WEEE品类明细", ""),
-                    s.get("德国WEEE品类状态", ""),
-                    s.get("德国WEEE品类核对", ""),
-                    s.get("德国WEEE专项说明", ""),
-                    s.get("德国电池法品类明细", ""),
-                    s.get("德国电池法品类状态", ""),
-                    s.get("德国电池法品类核对", ""),
-                ]
+                state = "queried"
+            elif id(row) in skipped_ids:
+                state = "skipped"
             else:
-                # 阶段二中途停止/异常时，保留原始待查行并明确标记未执行，
-                # 不能再把整批 to_query 误报成“已查询”。
-                values = [
-                    row.get("sender_email", ""),
-                    self._format_date(row.get("date")),
-                    row.get("subject", ""),
-                    (row.get("body_text", "") or "")[:200],
-                    row.get("代理", ""),
-                    row.get("客户", ""),
-                    row.get("项目", ""),
-                    row.get("需求", ""),
-                    row.get("置信度", ""),
-                    "未比对",
-                    self._format_date(row.get("工单日期") or row.get("date")),
-                    "",
-                    row.get("匹配状态", "未执行"),
-                    "未执行",
-                    row.get("查询方式", "未执行"),
-                    row.get("模糊查询词", ""),
-                    "本次批次尚未执行到此条",
-                    self._format_date(row.get("查询时间戳")),
-                    row.get("邮件日期筛选范围", ""),
-                    row.get("日期筛选说明", ""),
-                    row.get("德国WEEE专项", ""),
-                    row.get("德国WEEE品类明细", ""),
-                    row.get("德国WEEE品类状态", ""),
-                    row.get("德国WEEE品类核对", ""),
-                    row.get("德国WEEE专项说明", ""),
-                    row.get("德国电池法品类明细", ""),
-                    row.get("德国电池法品类状态", ""),
-                    row.get("德国电池法品类核对", ""),
-                ]
-            for col, val in enumerate(values, 1):
-                cell = ws.cell(row=row_idx, column=col, value=val)
-                cell.border = THIN_BORDER
-                cell.alignment = Alignment(vertical="top", wrap_text=True)
+                state = "pending"
+            for values in self._workorder_export_values(row, state):
+                for col_idx, value in enumerate(values, 1):
+                    cell = ws.cell(row=output_row, column=col_idx, value=value)
+                    cell.border = THIN_BORDER
+                    cell.alignment = Alignment(vertical="center", wrap_text=True)
+                    if col_idx == 8 and value == "否":
+                        cell.fill = COLOR_RED_FILL
+                        cell.font = COLOR_RED_FONT
+                    if col_idx == 9 and value:
+                        ws.cell(row=output_row, column=9).fill = COLOR_YELLOW_FILL
+                        ws.cell(row=output_row, column=9).font = COLOR_YELLOW_FONT
+                estimated_lines = max(
+                    1,
+                    *(max(1, (len(str(value or "")) + width - 1) // width)
+                      for value, width in zip(values, column_widths)),
+                )
+                ws.row_dimensions[output_row].height = min(72, max(24, estimated_lines * 16 + 8))
+                output_row += 1
 
-            # 颜色: 已查询但漏单 -> 红; 前置跳过 -> 灰
-            # 注: 下标按 values 位置写死；新增“查询方式/模糊查询词”后，
-            # 匹配状态=12、RPA查询状态=13、查询方式=14、模糊查询词=15。
-            is_missing = values[9] == "否"
-            is_skipped = values[13] == "跳过"
-            is_pending = values[13] == "未执行"
-            if is_missing:
-                for col in range(1, len(headers) + 1):
-                    ws.cell(row=row_idx, column=col).fill = COLOR_RED_FILL
-                    ws.cell(row=row_idx, column=col).font = COLOR_RED_FONT
-            elif is_skipped:
-                for col in range(1, len(headers) + 1):
-                    ws.cell(row=row_idx, column=col).fill = COLOR_GRAY_FILL
-                    ws.cell(row=row_idx, column=col).font = COLOR_GRAY_FONT
-            elif is_pending:
-                for col in range(1, len(headers) + 1):
-                    ws.cell(row=row_idx, column=col).fill = COLOR_GRAY_FILL
-                    ws.cell(row=row_idx, column=col).font = COLOR_GRAY_FONT
-            elif "日期异常" in str(values[12]):
-                for col in range(1, len(headers) + 1):
-                    ws.cell(row=row_idx, column=col).fill = COLOR_YELLOW_FILL
-                    ws.cell(row=row_idx, column=col).font = COLOR_YELLOW_FONT
-
-        col_widths = [25, 20, 40, 50, 18, 28, 22, 10, 12, 12, 20, 14, 18, 14, 18, 28, 30, 20, 25, 42, 16, 48, 20, 54, 34]
-        for idx, width in enumerate(col_widths, 1):
+        for idx, width in enumerate(column_widths, 1):
             ws.column_dimensions[get_column_letter(idx)].width = width
+        ws.row_dimensions[1].height = 28
         ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
         # 保存交给调用方（_save_pair），保证时序副本先落盘、稳定名被占用时不丢结果
         return wb
 
