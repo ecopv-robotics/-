@@ -55,6 +55,7 @@ analysis = Analysis(
         "torch", "torch.*", "torchvision", "torchvision.*",
         "tensorflow", "tensorflow.*",
         "modelscope", "modelscope.*",
+        "onnxruntime", "onnxruntime.*",
         "paddlex.inference.genai", "paddlex.inference.genai.*",
         "paddlex.inference.serving", "paddlex.inference.serving.*",
     ],
