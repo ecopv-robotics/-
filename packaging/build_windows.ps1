@@ -52,7 +52,7 @@ $previousPackagingFlag = $env:ECOPV_PACKAGING_BUILD
 try {
     $env:PYTHONPATH = Join-Path $PSScriptRoot 'build_support'
     $env:ECOPV_PACKAGING_BUILD = '1'
-    & python -m PyInstaller --noconfirm --clean --workpath $buildPath --distpath (Join-Path $projectRoot 'dist') (Join-Path $PSScriptRoot 'mail_audit_workbench.spec')
+    & python -m PyInstaller --noconfirm --workpath $buildPath --distpath (Join-Path $projectRoot 'dist') (Join-Path $PSScriptRoot 'mail_audit_workbench.spec')
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed with exit code $LASTEXITCODE"
     }

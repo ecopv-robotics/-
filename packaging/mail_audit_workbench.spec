@@ -38,7 +38,7 @@ datas.extend(
 )
 
 # The OCR engine resolves package versions at runtime.
-for distribution in ("paddleocr", "paddlex", "paddlepaddle", "modelscope"):
+for distribution in ("paddleocr", "paddlex", "paddlepaddle"):
     datas.extend(copy_metadata(distribution))
 
 analysis = Analysis(
@@ -49,11 +49,12 @@ analysis = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[str(PROJECT_ROOT / "packaging" / "pyinstaller_hooks")],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(PROJECT_ROOT / "packaging" / "build_support" / "ocr_model_cache_hook.py")],
     excludes=[
         "pytest", "IPython", "jupyter", "notebook",
         "torch", "torch.*", "torchvision", "torchvision.*",
         "tensorflow", "tensorflow.*",
+        "modelscope", "modelscope.*",
         "paddlex.inference.genai", "paddlex.inference.genai.*",
         "paddlex.inference.serving", "paddlex.inference.serving.*",
     ],
