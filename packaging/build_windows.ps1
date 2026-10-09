@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $releaseName = 'ECOPV_Mail_Audit_Workbench_2026-10-09'
@@ -68,6 +68,8 @@ if (-not (Test-Path -LiteralPath $releaseDir)) {
 
 Copy-Item -LiteralPath (Join-Path $projectRoot 'config.example.yaml') -Destination (Join-Path $releaseDir 'config.example.yaml')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'config.example.yaml') -Destination (Join-Path $releaseDir 'config.yaml')
+Copy-Item -LiteralPath (Join-Path $projectRoot 'workbench.html') -Destination (Join-Path $releaseDir 'workbench.html')
+Copy-Item -LiteralPath (Join-Path $projectRoot 'web_console') -Destination $releaseDir -Recurse
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'start_workbench.bat') -Destination (Join-Path $releaseDir '启动工作台.bat')
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot '操作使用说明.md') -Destination (Join-Path $releaseDir '操作使用说明.md')
 $ocrModelTarget = Join-Path $releaseDir 'model_cache\official_models'
@@ -81,6 +83,14 @@ Copy-Item -LiteralPath $sevenZipPath -Destination $toolsDir
 Copy-Item -LiteralPath $sevenZipDll -Destination $toolsDir
 Copy-Item -LiteralPath $sevenZipLicense -Destination (Join-Path $toolsDir '7-Zip-License.txt')
 
-Compress-Archive -LiteralPath $releaseDir -DestinationPath $archivePath -CompressionLevel Optimal
+Push-Location (Join-Path $projectRoot 'dist')
+try {
+    & $sevenZipPath a -tzip -mcu=on -mx=1 ($releaseName + '.zip') $releaseName
+    if ($LASTEXITCODE -ne 0) {
+        throw "7-Zip archive creation failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    Pop-Location
+}
 Write-Output "Release folder: $releaseDir"
 Write-Output "Release archive: $archivePath"
