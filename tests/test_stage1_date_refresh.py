@@ -141,7 +141,7 @@ def test_publish_preserves_confirmation_for_identical_evidence_and_old_cache_can
     cached = tmp_path / 'old-cache.xlsx'
     cached.write_bytes(old_bytes)
     publish_stage1(tmp_path, output, True, [row('Fixture 7f43c514 Ltd'), row('Fixture ff637f3e Ltd')], [], '2026-08-26', '2026-08-26')
-    saved_records = json.loads(state.read_text())['records']
+    saved_records = json.loads(state.read_text(encoding='utf-8'))['records']
     confirmed_id = next(r['_id'] for r in db.read_rows() if r['客户公司名称'] == 'Fixture 7f43c514 Ltd')
     assert saved_records[confirmed_id]['status'] == 'confirmed'
     assert len(db.read_rows()) == 3  # two fresh + one other-day
@@ -162,7 +162,7 @@ def test_publish_changed_source_evidence_drops_confirmation_and_marks_review(tmp
     output, primary, review, db, state = setup_old(tmp_path)
     publish_stage1(tmp_path, output, True, [row('Fixture 7f43c514 Ltd', source_content='Changed synthetic source')], [],
                    '2026-08-26', '2026-08-26')
-    assert json.loads(state.read_text())['records'] == {}
+    assert json.loads(state.read_text(encoding='utf-8'))['records'] == {}
     fresh = next(r for r in db.read_rows() if r['客户公司名称'] == 'Fixture 7f43c514 Ltd')
     assert fresh['置信度'] == '需人工确认'
     assert '原始证据已变化' in fresh['人工复核提示']
@@ -174,7 +174,7 @@ def test_publish_changed_source_evidence_drops_confirmation_and_marks_review(tmp
 def test_publish_changed_extraction_keeps_edits_only_as_unconfirmed_draft(tmp_path):
     output, primary, review, db, state = setup_old(tmp_path)
     old = next(r for r in db.read_rows() if r['客户公司名称'] == 'Fixture 7f43c514 Ltd')
-    state_payload = json.loads(state.read_text())
+    state_payload = json.loads(state.read_text(encoding='utf-8'))
     entry = state_payload['records'][old['_id']]
     entry.update({
         'fields': {'company': 'Manually Corrected Synthetic Ltd'},
@@ -188,7 +188,7 @@ def test_publish_changed_extraction_keeps_edits_only_as_unconfirmed_draft(tmp_pa
                    '2026-08-26', '2026-08-26')
     fresh = next(r for r in db.read_rows() if r['客户公司名称'] == 'Fixture New Extraction Ltd')
     assert fresh['阶段一证据指纹'] == same_evidence
-    migrated = json.loads(state.read_text())['records'][fresh['_id']]
+    migrated = json.loads(state.read_text(encoding='utf-8'))['records'][fresh['_id']]
     assert migrated['status'] == 'review'
     assert migrated['fields']['company'] == 'Manually Corrected Synthetic Ltd'
     assert 'weee_status' not in migrated and 'weee_confirmed_at' not in migrated
@@ -200,7 +200,7 @@ def test_publish_duplicate_mapping_does_not_guess_which_row_was_confirmed(tmp_pa
     output, primary, review, db, state = setup_old(tmp_path)
     duplicate = row('Fixture 7f43c514 Ltd')
     publish_stage1(tmp_path, output, True, [duplicate, dict(duplicate)], [], '2026-08-26', '2026-08-26')
-    assert json.loads(state.read_text())['records'] == {}
+    assert json.loads(state.read_text(encoding='utf-8'))['records'] == {}
     fresh = [r for r in db.read_rows() if r['客户公司名称'] == 'Fixture 7f43c514 Ltd']
     assert len(fresh) == 2
     assert all(r['置信度'] == '需人工确认' for r in fresh)

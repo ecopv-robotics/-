@@ -108,7 +108,9 @@ def _mark_refresh_conflict(row, reason):
     row["置信度"] = "需人工确认"
     existing = str(row.get("人工复核提示") or row.get("待人工补全") or "").strip()
     if reason not in existing:
-        row["人工复核提示"] = "；".join(value for value in (existing, reason) if value)
+        combined = "；".join(value for value in (existing, reason) if value)
+        row["阶段一刷新复核提示"] = combined
+        row["人工复核提示"] = combined
 
 
 def _dedupe_previous_active(database_rows, legacy_rows):

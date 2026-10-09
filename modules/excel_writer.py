@@ -431,6 +431,9 @@ class ExcelWriter:
             hints.append("核对需求")
         if row.get("置信度") == "需人工确认":
             hints.append("完成后再导入工单核对")
+        refresh_hint = str(row.get("阶段一刷新复核提示", "") or "").strip()
+        if refresh_hint:
+            hints.append(refresh_hint)
         semantic_status = str(row.get("语义校验状态", "") or "")
         if semantic_status in {"uncertain", "invalid", "LLM调用失败/未完成"}:
             reason = str(row.get("语义校验原因", "") or "").strip()
