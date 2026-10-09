@@ -32,11 +32,15 @@ class RunHandler(_Handler):
         parsed = urlparse(self.path)
         controller = self.server.run_controller
         try:
-            assets = {"/run": ("index.html", "text/html"),
-                      "/run/": ("index.html", "text/html"),
+            assets = {"/run/embed": ("index.html", "text/html"),
                       "/run/console.js": ("console.js", "application/javascript"),
                       "/run/console.css": ("console.css", "text/css")}
-            if parsed.path in assets:
+            if parsed.path in {"/run", "/run/"}:
+                self.send_response(302)
+                self.send_header("Location", "/?view=run")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+            elif parsed.path in assets:
                 name, mime = assets[parsed.path]
                 self._send((ASSETS / name).read_bytes(), content_type=mime + "; charset=utf-8")
             elif parsed.path == "/api/run/state":

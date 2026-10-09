@@ -217,6 +217,9 @@ def http_server(controller):
 def test_http_origin_token_html_and_download(http_server):
     controller, _, url = http_server
     with urlopen(url + "/run") as response:
+        assert response.url.endswith("/?view=run")
+        assert b'id="run-console-page"' in response.read()
+    with urlopen(url + "/run/embed") as response:
         assert b"2026.10.08-r4" in response.read()
     with urlopen(url + "/api/run/state") as response:
         state = json.load(response)
