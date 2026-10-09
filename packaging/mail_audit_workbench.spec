@@ -56,6 +56,7 @@ analysis = Analysis(
     excludes=[
         "pytest", "IPython", "jupyter", "notebook",
         "torch", "torch.*", "torchvision", "torchvision.*",
+        "tensorflow", "tensorflow.*",
         "paddlex.inference.genai", "paddlex.inference.genai.*",
         "paddlex.inference.serving", "paddlex.inference.serving.*",
     ],

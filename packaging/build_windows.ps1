@@ -47,13 +47,19 @@ if (Test-Path -LiteralPath $archivePath) {
 }
 
 Push-Location $projectRoot
+$previousPythonPath = $env:PYTHONPATH
+$previousPackagingFlag = $env:ECOPV_PACKAGING_BUILD
 try {
+    $env:PYTHONPATH = Join-Path $PSScriptRoot 'build_support'
+    $env:ECOPV_PACKAGING_BUILD = '1'
     & python -m PyInstaller --noconfirm --clean --workpath $buildPath --distpath (Join-Path $projectRoot 'dist') (Join-Path $PSScriptRoot 'mail_audit_workbench.spec')
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed with exit code $LASTEXITCODE"
     }
 } finally {
     Pop-Location
+    $env:PYTHONPATH = $previousPythonPath
+    $env:ECOPV_PACKAGING_BUILD = $previousPackagingFlag
 }
 
 if (-not (Test-Path -LiteralPath $releaseDir)) {
