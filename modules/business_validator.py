@@ -69,6 +69,7 @@ def inspect_row(row: Dict, agent_alias_index: Dict = None) -> List[dict]:
         issues.append({"field": field, "code": code, "reason": reason})
 
     company = str(row.get("客户", "") or "").strip()
+    normalized_company = _identity_key(company)
     agent = str(row.get("代理", "") or "").strip()
 
     if not company:
