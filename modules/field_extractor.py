@@ -27,6 +27,7 @@ class FieldExtractor:
         logger=None,
         llm_client=None,
         ocr_fallback: bool = True,
+        agent_identity_aliases: Optional[Dict[str, List[str]]] = None,
     ):
         """
         agent_email_map: {邮箱地址(lower): {"代理": str, "代理简称": str, "收件人邮箱": str}}
@@ -38,6 +39,7 @@ class FieldExtractor:
         self.project_names = project_names
         self.project_name_list = [p["项目名称"] for p in project_names if p.get("项目名称")]
         self.project_candidates = [(p["项目名称"], p) for p in project_names if p.get("项目名称")]
+        self.agent_identity_aliases = agent_identity_aliases or {}
         # 邮箱并不是代理唯一标识。真实主题常以“巨齿鲨+客户+项目”或
         # “示例代理己——客户编号+公司”开头，因此预先把附件三中的全称、简称、
         # 别名建成可审计的主题匹配索引。
@@ -109,6 +111,9 @@ class FieldExtractor:
         else:
             customer_result = self._extract_customer(subject, body, attachments)
         customer_result = self._sanitize_customer_result(customer_result)
+        customer_result["customer"] = self._repair_truncated_company(
+            customer_result.get("customer", ""), subject, body
+        )
 
         # 公司名可能同时出现在主题、正文、附件文件名和附件表格中。单一来源
         # 抽到的值不应直接覆盖其它来源；先做一次跨来源印证，只有至少两个
@@ -231,12 +236,17 @@ class FieldExtractor:
         # 结构化分组缺失/待确认”的邮件启用记录级补充，避免每封普通邮件都增加
         # 调用成本；有勾选式申请表时仍以勾选结果为唯一权威。
         all_text = subject + "\n" + body
-        entity_companies = self._company_substrings(all_text)
+        entity_companies = [name for name in self._company_substrings(all_text)
+                            if not self._is_agent_name(name)]
         structured_groups = project_result.get("groups") or groups or []
         grouped_companies = {
             normalize_text(g.get("customer", "")) for g in structured_groups
             if g.get("customer")
         }
+        grouped_companies.update(
+            normalize_text(alias)
+            for group in structured_groups for alias in group.get("company_aliases", [])
+        )
         missing_entities = {
             normalize_text(name) for name in entity_companies
         } - grouped_companies
@@ -423,7 +433,7 @@ class FieldExtractor:
             for g in row_groups:
                 project_codes = g.get("project_codes") if isinstance(g.get("project_codes"), dict) else {}
                 g_customer = {
-                    "customer": g.get("customer", ""),
+                    "customer": self._repair_truncated_company(g.get("customer", ""), subject, body),
                     "source": g.get("source", "待确认"),
                     "customer_code": g.get("customer_code", ""),
                     "attachment_record_source": g.get("attachment_record_source", ""),
@@ -1076,6 +1086,13 @@ class FieldExtractor:
                 bucket = index.setdefault(alias, [])
                 if official not in bucket:
                     bucket.append(official)
+        for official, aliases in self.agent_identity_aliases.items():
+            for alias in [official, *(aliases if isinstance(aliases, list) else [aliases])]:
+                alias = str(alias or "").strip()
+                if len(alias) >= 2:
+                    bucket = index.setdefault(alias, [])
+                    if official not in bucket:
+                        bucket.append(official)
         return index
 
     def _extract_agent_from_subject(self, subject: str) -> Optional[dict]:
@@ -1346,7 +1363,11 @@ class FieldExtractor:
                 })
         if not unique:
             return {}
-        if len(unique) > 1:
+        bilingual_pair = (len(unique) == 2
+                          and {item.get("field_type") for item in unique}
+                          == {"company_name_zh", "company_name_en"}
+                          and len({item.get("source") for item in unique}) == 1)
+        if len(unique) > 1 and not bilingual_pair:
             self._log(
                 f"EPR申请表发现多个公司候选，转入一次性语义仲裁: {[item['value'] for item in unique]}",
                 "warning",
@@ -1359,6 +1380,7 @@ class FieldExtractor:
             "source": "附件EPR申请表",
             "company_extraction_method": "格式化字段优先" if preferred.get("field_type") != "regex_fallback" else "格式化字段未命中后正则回退",
             "company_candidates": unique if len(unique) > 1 else [],
+            "company_aliases": [item["value"] for item in unique if item is not preferred] if bilingual_pair else [],
         }
 
     def _extract_customer(
@@ -1579,6 +1601,11 @@ class FieldExtractor:
     def _sanitize_customer_result(self, result: dict) -> dict:
         """去除制表符拼接的标题/表格行，防止它被当作公司名传给阶段二。"""
         raw = str(result.get("customer", "") or "")
+        if self._is_agent_name(raw):
+            self._log("客户候选与已知代理全称或别名一致，转人工补全", "warning")
+            result["customer"] = ""
+            result["source"] = "待确认(代理名冲突)"
+            return result
         noise_reason = self._customer_noise_reason(raw)
         if noise_reason:
             self._log(f"客户候选不是公司主体({noise_reason})，转人工补全", "warning")
@@ -1839,7 +1866,29 @@ class FieldExtractor:
 
     def _is_agent_name(self, text: str) -> bool:
         """判断文本是否是代理名(而非公司名)"""
-        return text.strip() in self._agent_alias_index
+        candidate = normalize_text(str(text or ""))
+        return bool(candidate and any(
+            candidate == normalize_text(alias) for alias in self._agent_alias_index
+        ))
+
+    def _repair_truncated_company(self, customer: str, subject: str, body: str) -> str:
+        """只用同封邮件中完整出现的法定名称修补丢失的英文开头。"""
+        raw = str(customer or "").strip()
+        if not raw or self._is_agent_name(raw):
+            return raw
+        matches = []
+        for candidate in self._company_substrings(subject + "\n" + body):
+            if (not self._is_agent_name(candidate)
+                    and len(candidate) > len(raw)
+                    and candidate.casefold().endswith(raw.casefold())
+                    and 1 <= len(candidate) - len(raw) <= 12
+                    and re.match(r"^[A-Za-z]", candidate)):
+                matches.append(candidate)
+        unique = list(dict.fromkeys(matches))
+        if len(unique) == 1:
+            self._log("客户英文名开头已依据同封邮件完整原文修复")
+            return unique[0]
+        return raw
 
     def _strip_known_agent_prefix(self, value: str) -> str:
         """剥离粘在公司名前的已知代理别名。
@@ -2371,6 +2420,27 @@ class FieldExtractor:
         ]
         subject_projects = list(dict.fromkeys(subject_projects))
         if len(subject_projects) == 1:
+            # 编号清单每行只代表一个申请人；括号内英文是同一主体的别名。
+            # 不再把尾部代理签名、英文译名扩成额外业务。
+            numbered_rows = []
+            for raw_line in body.splitlines():
+                match = re.match(r"^\s*\d{1,3}\s*[.、)）]\s*(.+?)\s*$", raw_line)
+                if not match:
+                    continue
+                candidates = self._company_substrings(match.group(1))
+                customers = [name for name in candidates if not self._is_agent_name(name)]
+                chinese = [name for name in customers if re.search(r"[\u4e00-\u9fff]", name)]
+                primary = chinese[0] if chinese else (customers[0] if customers else "")
+                if primary and not self._customer_noise_reason(primary):
+                    numbered_rows.append((primary, [name for name in customers if name != primary], len(chinese) > 1))
+            if len(numbered_rows) >= 2:
+                count_match = re.search(r"(?:以下|共)?\s*(\d{1,3})\s*家(?:公司|主体|企业)", subject + " " + body)
+                count_conflict = bool(count_match and int(count_match.group(1)) != len(numbered_rows))
+                return [{
+                    "customer": customer, "company_aliases": aliases,
+                    "source": "正文编号批量清单", "projects": list(subject_projects),
+                    "needs_review": conflict or count_conflict,
+                } for customer, aliases, conflict in numbered_rows]
             # 无编号的逐行主体清单也可以继承唯一主题项目。只接受整行
             # 公司名，不把正文叙述、联系人或常见签名区域中的公司扩成工单。
             plain_companies = []
@@ -2519,6 +2589,9 @@ class FieldExtractor:
             for applicant in applicants:
                 member = applicant["member"]
                 candidates = applicant["candidates"]
+                bilingual_pair = (len(candidates) == 2
+                                  and {item.get("field_type") for item in candidates}
+                                  == {"company_name_zh", "company_name_en"})
                 peers = [item for item in applicants if item["member"] == member]
                 matching_forms = []
                 for index, form in enumerate(forms):
@@ -2563,8 +2636,9 @@ class FieldExtractor:
                     "customer": candidates[0]["value"] if candidates else "",
                     "source": "附件EPR申请表格式化字段", "projects": names,
                     "company_candidates": candidates if len(candidates) > 1 else [],
+                    "company_aliases": [candidates[1]["value"]] if bilingual_pair else [],
                     "attachment_record_source": f"附件EPR申请表：{attachment_index + 1}:{member}" + (f" / {sheets}" if sheets else ""),
-                    "needs_review": review or not names or len(candidates) > 1,
+                    "needs_review": review or not names or (len(candidates) > 1 and not bilingual_pair),
                 })
             # 缺少主体字段的勾选表仍保留待确认，不因为新分组吞掉该表。
             for index, form in enumerate(forms):
@@ -3062,6 +3136,14 @@ class FieldExtractor:
             c = self._country_names_in(m.group(1))[0]
             for bt_m in re.finditer(all_bt, m.group(2)):
                 _add(m.group(0), c + alias_to_std[bt_m.group(0)])
+
+        # 德国 WEEE 类目名称有时替代项目名称出现。仅在“新增类目/品类”
+        # 语境且没有其它明确国家时采用该业务映射；有国家冲突时留给复核。
+        if (re.search(r"新增(?:类目|品类|分类)", text_l)
+                and "电气与电子设备废料" in text_l
+                and re.search(r"大型设备|小型设备|温度交换|显示屏|灯具|光伏面板", text_l)
+                and not any(country in text_l for country in COUNTRIES if country != "德国")):
+            _add("电气与电子设备废料", "德国WEEE")
 
         return found
 

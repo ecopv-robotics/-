@@ -10,6 +10,9 @@ email:
   connect_retries: 3
   cache_enabled: false
   cache_dir: cache/mails
+field_extraction:
+  # Optional local aliases for one agency; use a real mapping only in ignored config.yaml.
+  agent_aliases: {}
 workorder:
   url: https://workorders.example.invalid
   username: ''

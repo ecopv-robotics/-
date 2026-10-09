@@ -109,3 +109,42 @@ def test_attachment_file_index_keeps_same_named_attachments_separate():
     assert [item["filename"] for item in items] == ["公司资料.jpg", "公司资料.jpg"]
     assert [item["token"] for item in items] == ["first.jpg", "second.jpg"]
     assert [item["attachment_index"] for item in items] == [0, 1]
+def test_numbered_bilingual_companies_do_not_expand_agent_signature():
+    extractor = FieldExtractor({}, [], ocr_fallback=False, agent_identity_aliases={
+        "示例代理": ["深圳示例代理检测有限公司", "Shenzhen Example Agent Co., Ltd"],
+    })
+    subject = "示例代理-甲甲科技有限公司、乙乙贸易有限公司-2家公司的荷兰包装法取消注册，撤单"
+    body = ("以下2家公司的荷兰包装法客户决定取消注册，撤单处理。\n"
+            "1、甲甲科技有限公司（ALPHA TECHNOLOGY LIMITED）\n"
+            "2、乙乙贸易有限公司（BETA TRADING LIMITED）\n\n"
+            "深圳示例代理检测有限公司\nShenzhen Example Agent Co., Ltd")
+    groups = extractor._structured_groups(subject, body)
+    assert [group["customer"] for group in groups] == ["甲甲科技有限公司", "乙乙贸易有限公司"]
+    assert groups[0]["company_aliases"] == ["ALPHA TECHNOLOGY LIMITED"]
+    assert not any(group["needs_review"] for group in groups)
+    assert extractor._is_agent_name("shenzhen unrelated test co., ltd") is False
+    assert extractor._is_agent_name("SHENZHEN EXAMPLE AGENT CO., LTD") is True
+    rows = extractor.extract_fields({"subject": subject, "body_text": body, "attachments": []})
+    assert [(row["客户"], row["项目"]) for row in rows] == [
+        ("甲甲科技有限公司", "荷兰包装法"), ("乙乙贸易有限公司", "荷兰包装法")
+    ]
+
+
+def test_weee_category_phrase_implies_project_only_without_other_country():
+    extractor = FieldExtractor({}, [], ocr_fallback=False)
+    phrase = "新增类目：电气与电子设备废料-大型设备(光伏面板除外)"
+    assert [item["standard_name"] for item in extractor._extract_projects_by_rules(phrase)] == ["德国WEEE"]
+    assert extractor._extract_projects_by_rules("法国" + phrase) == []
+
+
+def test_full_extraction_preserves_english_company_leading_letters():
+    extractor = FieldExtractor({}, [], ocr_fallback=False)
+    rows = extractor.extract_fields({
+        "subject": "回复: 示例代理-ExampleZone Malta Limited-2026年意大利包装法注册",
+        "body_text": "你好，ExampleZone Malta Limited意大利包装都撤单，取消注册\n\n公司：ExampleZone Malta Limited",
+        "attachments": [],
+    })
+    assert [row["客户"] for row in rows] == ["ExampleZone Malta Limited"]
+    assert extractor._repair_truncated_company(
+        "ampleZone Malta Limited", "ExampleZone Malta Limited 意大利包装法", ""
+    ) == "ExampleZone Malta Limited"

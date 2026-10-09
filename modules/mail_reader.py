@@ -20,17 +20,22 @@ from utils.runtime_paths import APP_ROOT
 
 
 def _decode_str(s):
-    """解码邮件头部字符串"""
+    """尽量无损解码邮件头；错误的 MIME 字符集声明不能直接变成乱码。"""
     if s is None:
         return ""
     parts = decode_header(s)
     result = []
     for data, charset in parts:
         if isinstance(data, bytes):
-            try:
-                result.append(data.decode(charset or "utf-8", errors="replace"))
-            except (LookupError, Exception):
-                result.append(data.decode("utf-8", errors="replace"))
+            decoded = None
+            # UTF-8 原始字节经常被错误标为 GBK；优先尝试无损 UTF-8。
+            for encoding in dict.fromkeys(("utf-8", charset or "utf-8", "gb18030", "big5")):
+                try:
+                    decoded = data.decode(encoding, errors="strict")
+                    break
+                except (LookupError, UnicodeError):
+                    continue
+            result.append(decoded if decoded is not None else data.decode("utf-8", errors="replace"))
         else:
             result.append(data)
     return "".join(result)

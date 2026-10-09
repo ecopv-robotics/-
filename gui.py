@@ -1013,7 +1013,8 @@ class WorkerThread(QThread):
         from modules.field_extractor import FieldExtractor
         ocr_fallback = self.config.get("ocr", {}).get("fallback", True)
         extractor = FieldExtractor(agent_map, project_table, logger, llm_client,
-                                   ocr_fallback=ocr_fallback)
+                                   ocr_fallback=ocr_fallback,
+                                   agent_identity_aliases=self.config.get("field_extraction", {}).get("agent_aliases", {}))
         agent_alias_index = getattr(extractor, "_agent_alias_index", {})
         all_rows = []
         mail_blocks = []   # 每封邮件的提取行，用于后续「同封邮件内」去重与语义校验分组
