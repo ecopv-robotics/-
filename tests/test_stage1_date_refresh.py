@@ -1,5 +1,6 @@
 """Anonymous date replacement regressions; no mailbox, LLM, or live business data."""
 import json
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -11,9 +12,12 @@ from workbench_database import WorkbenchDatabase, default_database_path
 from workbench_server import WorkbenchStore, _read_sheet
 
 
-def row(company='Sample Alpha Ltd', day='2026-08-26'):
+def row(company='Sample Alpha Ltd', day='2026-08-26', source_content=None):
+    source_content = source_content or f'Synthetic source evidence for {company} on {day}'
+    fingerprint = hashlib.sha256(source_content.encode('utf-8')).hexdigest()
     return {'sender_email': 'sender@example.invalid', 'date': day + ' 10:00:00',
             'subject': 'Sample registration', '客户': company, '项目': '法国包装法',
+            'body_original': source_content, '阶段一证据指纹': fingerprint,
             '需求': '注册', '代理': '示例代理', '代理命中数': 1, '置信度': 'high'}
 
 
@@ -131,13 +135,15 @@ def setup_old(tmp_path):
     return output, Path(primary), Path(review), db, state
 
 
-def test_publish_resets_confirmation_backs_up_and_old_cache_cannot_return(tmp_path):
+def test_publish_preserves_confirmation_for_identical_evidence_and_old_cache_cannot_return(tmp_path):
     output, primary, review, db, state = setup_old(tmp_path)
     old_bytes = primary.read_bytes()
     cached = tmp_path / 'old-cache.xlsx'
     cached.write_bytes(old_bytes)
     publish_stage1(tmp_path, output, True, [row('Fixture 7f43c514 Ltd'), row('Fixture ff637f3e Ltd')], [], '2026-08-26', '2026-08-26')
-    assert json.loads(state.read_text())['records'] == {}
+    saved_records = json.loads(state.read_text())['records']
+    confirmed_id = next(r['_id'] for r in db.read_rows() if r['客户公司名称'] == 'Fixture 7f43c514 Ltd')
+    assert saved_records[confirmed_id]['status'] == 'confirmed'
     assert len(db.read_rows()) == 3  # two fresh + one other-day
     assert all(not r.get('_legacy_id') for r in db.read_rows() if r['发件日期'].startswith('2026-08-26'))
     backups = list((tmp_path / 'storage' / 'stage1_refresh_backups').glob('*/manifest.json'))
@@ -147,7 +153,58 @@ def test_publish_resets_confirmation_backs_up_and_old_cache_cannot_return(tmp_pa
     store = WorkbenchStore(str(cached), str(tmp_path / 'missing.xlsx'), state_path=str(state))
     store.database = db
     assert {r['客户公司名称'] for r in store._raw_records()} == {'Fixture 7f43c514 Ltd', 'Fixture ff637f3e Ltd', 'Fixture 506454f2 Ltd'}
-    assert all(store._record(r, store._state())['status'] != 'confirmed' for r in store._raw_records())
+    statuses = {r['客户公司名称']: store._record(r, store._state())['status'] for r in store._raw_records()}
+    assert statuses['Fixture 7f43c514 Ltd'] == 'confirmed'
+    assert statuses['Fixture ff637f3e Ltd'] != 'confirmed'
+
+
+def test_publish_changed_source_evidence_drops_confirmation_and_marks_review(tmp_path):
+    output, primary, review, db, state = setup_old(tmp_path)
+    publish_stage1(tmp_path, output, True, [row('Fixture 7f43c514 Ltd', source_content='Changed synthetic source')], [],
+                   '2026-08-26', '2026-08-26')
+    assert json.loads(state.read_text())['records'] == {}
+    fresh = next(r for r in db.read_rows() if r['客户公司名称'] == 'Fixture 7f43c514 Ltd')
+    assert fresh['置信度'] == '需人工确认'
+    assert '原始证据已变化' in fresh['人工复核提示']
+    store = WorkbenchStore(str(primary), str(review), state_path=str(state))
+    store.database = db
+    assert store._record(fresh, store._state())['status'] == 'review'
+
+
+def test_publish_changed_extraction_keeps_edits_only_as_unconfirmed_draft(tmp_path):
+    output, primary, review, db, state = setup_old(tmp_path)
+    old = next(r for r in db.read_rows() if r['客户公司名称'] == 'Fixture 7f43c514 Ltd')
+    state_payload = json.loads(state.read_text())
+    entry = state_payload['records'][old['_id']]
+    entry.update({
+        'fields': {'company': 'Manually Corrected Synthetic Ltd'},
+        'weee_status': 'confirmed',
+        'weee_confirmed_at': '2026-10-01T10:00:00',
+        'weee_items': [{'brand': 'Sample Brand', 'category': 'Large equipment', 'weee_confirmed': True}],
+    })
+    state.write_text(json.dumps(state_payload), encoding='utf-8')
+    same_evidence = old['阶段一证据指纹']
+    publish_stage1(tmp_path, output, True, [row('Fixture New Extraction Ltd', source_content='Synthetic source evidence for Fixture 7f43c514 Ltd on 2026-08-26')], [],
+                   '2026-08-26', '2026-08-26')
+    fresh = next(r for r in db.read_rows() if r['客户公司名称'] == 'Fixture New Extraction Ltd')
+    assert fresh['阶段一证据指纹'] == same_evidence
+    migrated = json.loads(state.read_text())['records'][fresh['_id']]
+    assert migrated['status'] == 'review'
+    assert migrated['fields']['company'] == 'Manually Corrected Synthetic Ltd'
+    assert 'weee_status' not in migrated and 'weee_confirmed_at' not in migrated
+    assert migrated['weee_items'][0]['weee_confirmed'] is False
+    assert '提取的公司/项目/需求已变化' in fresh['人工复核提示']
+
+
+def test_publish_duplicate_mapping_does_not_guess_which_row_was_confirmed(tmp_path):
+    output, primary, review, db, state = setup_old(tmp_path)
+    duplicate = row('Fixture 7f43c514 Ltd')
+    publish_stage1(tmp_path, output, True, [duplicate, dict(duplicate)], [], '2026-08-26', '2026-08-26')
+    assert json.loads(state.read_text())['records'] == {}
+    fresh = [r for r in db.read_rows() if r['客户公司名称'] == 'Fixture 7f43c514 Ltd']
+    assert len(fresh) == 2
+    assert all(r['置信度'] == '需人工确认' for r in fresh)
+    assert all('无法唯一对应' in r['人工复核提示'] for r in fresh)
 
 
 def test_cancelled_run_never_replaces(tmp_path):

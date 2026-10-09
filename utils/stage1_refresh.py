@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from workbench_database import (
-    WORKBENCH_DATA_LOCK, WorkbenchDatabase, _canonical_payload, _date_key,
+    WORKBENCH_DATA_LOCK, WorkbenchDatabase, _canonical_payload, _date_key, _mail_identity,
     _key, _record_base, default_database_path,
 )
 
