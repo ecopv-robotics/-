@@ -1214,6 +1214,46 @@ class FieldExtractor:
                            for name in names],
         }
 
+    def _extract_agent_from_signature(self, body: str) -> Optional[dict]:
+        """Match a registered proxy alias only in the mail's short signature footer."""
+        if not body or not self._agent_alias_index:
+            return None
+        lines = [line.strip(" \t\r\n•·*-") for line in str(body).splitlines() if line.strip()]
+        candidates = []
+        for line_index, raw_line in enumerate(lines[-10:]):
+            line = re.sub(
+                r"^(?:代理|联系人|签名|公司|发件人|from)\s*[:：]\s*", "", raw_line, flags=re.I
+            ).strip()
+            for alias, officials in self._agent_alias_index.items():
+                alias = str(alias or "").strip()
+                if not alias:
+                    continue
+                exact = normalize_text(line).casefold() == normalize_text(alias).casefold()
+                starts_alias = line[:len(alias)].casefold() == alias.casefold()
+                suffix = line[len(alias):].strip() if starts_alias else ""
+                role_suffix = bool(re.match(
+                    r"^(?:[-—–_:：/|]|WEEE\b|电池|包装|助理|专员|客服|业务|联系|电话|邮箱|微信|WhatsApp\b)",
+                    suffix, re.I,
+                ))
+                if not exact and not (starts_alias and role_suffix):
+                    continue
+                for official in officials:
+                    candidates.append((line_index, len(alias), official))
+        if not candidates:
+            return None
+        latest_line = max(item[0] for item in candidates)
+        latest = [item for item in candidates if item[0] == latest_line]
+        longest = max(item[1] for item in latest)
+        names = list(dict.fromkeys(item[2] for item in latest if item[1] == longest))
+        if len(names) == 1:
+            return {"agent": names[0], "match_method": "签名代理别名精确匹配", "candidates": []}
+        return {
+            "agent": " / ".join(names),
+            "match_method": "签名代理别名多匹配-人工排查",
+            "candidates": [{"text": "签名代理别名", "data": {"代理": name}, "score": 100}
+                           for name in names],
+        }
+
     def _extract_agent(
         self, sender_email: str, subject: str, body: str, attachments: list
     ) -> dict:
@@ -1280,6 +1320,10 @@ class FieldExtractor:
                 "match_method": "邮箱模糊匹配",
                 "candidates": [],
             }
+
+        signature_match = self._extract_agent_from_signature(body)
+        if signature_match:
+            return signature_match
 
         # 多匹配 — 全部展示
         # 同一个代理常登记多个邮箱，直接 join 会拼出“向善 / 向善”这种重复值，
@@ -1959,6 +2003,12 @@ class FieldExtractor:
         for alias in aliases:
             if len(raw) <= len(alias) or raw[:len(alias)].casefold() != alias.casefold():
                 continue
+            # A short Latin alias like "Cl" must not consume the start of
+            # a real company name such as "ClickZone".
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 .,&'’()/-]*", alias):
+                next_char = raw[len(alias):len(alias) + 1]
+                if next_char and next_char.isalnum():
+                    continue
             remainder = raw[len(alias):].lstrip(" \t-—_:：+＋/／")
             if remainder and self._company_fragment_is_valid(remainder):
                 return remainder.strip(" .,-")
