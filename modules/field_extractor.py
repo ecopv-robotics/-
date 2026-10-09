@@ -9,6 +9,7 @@
 """
 import json
 import html
+import hashlib
 import re
 import os
 from typing import List, Dict, Set, Optional
@@ -62,6 +63,9 @@ class FieldExtractor:
         body = mail.get("body_text", "") or ""
         attachments = mail.get("attachments", [])
         sender_email = mail.get("sender_email", "").lower()
+        decoding_warning = "\ufffd" in (
+            subject + "\n" + body + "\n" + str(mail.get("body_original") or "")
+        )
 
         # E1a: 提取需求类型
         need = self._extract_need(subject + " " + body)
@@ -423,7 +427,7 @@ class FieldExtractor:
             ) or self._client_code_near_company(subject, customer_result.get("customer", ""))
 
         # 勾选不完整 / 未勾选 → 强制转人工(不因 OCR 或 LLM 而"猜"出项目)
-        need_review = bool(project_result.get("need_review"))
+        need_review = bool(project_result.get("need_review") or decoding_warning)
 
         # 组装输出
         rows = []
@@ -505,7 +509,16 @@ class FieldExtractor:
                         value for value in (existing, count_message) if value
                     )
 
+        evidence_fingerprint = self._source_evidence_fingerprint(mail, subject, body)
         for row in rows:
+            row["阶段一证据指纹"] = evidence_fingerprint
+            if decoding_warning:
+                row["置信度"] = "需人工确认"
+                row["邮件解码状态"] = "检测到解码替代字符"
+                warning = "邮件主题或正文含解码替代字符（�），请核对原始邮件"
+                existing = str(row.get("人工复核提示", "") or "").strip()
+                if warning not in existing:
+                    row["人工复核提示"] = "；".join(value for value in (existing, warning) if value)
             if llm_attempted and llm_used:
                 row["字段LLM状态"] = "结构校验通过"
                 row["字段LLM失败原因"] = ""
@@ -521,6 +534,47 @@ class FieldExtractor:
                 row["字段LLM失败原因"] = ""
 
         return rows
+
+    @staticmethod
+    def _source_evidence_fingerprint(mail: dict, subject: str, body: str) -> str:
+        """Hash source mail evidence and attachment bytes without storing local paths."""
+        attachment_sources = []
+        for attachment in mail.get("attachments") or []:
+            if not isinstance(attachment, dict):
+                continue
+            filename = str(attachment.get("filename") or "").strip()
+            digest = ""
+            filepath = str(attachment.get("filepath") or "").strip()
+            if filepath and os.path.isfile(filepath):
+                try:
+                    hasher = hashlib.sha256()
+                    with open(filepath, "rb") as stream:
+                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                            hasher.update(chunk)
+                    digest = hasher.hexdigest()
+                except OSError:
+                    digest = ""
+            if not digest:
+                fallback = {
+                    "text": str(attachment.get("text_content") or ""),
+                    "records": attachment.get("structured_records") or [],
+                    "sheets": attachment.get("sheets") or [],
+                }
+                digest = hashlib.sha256(json.dumps(
+                    fallback, ensure_ascii=False, sort_keys=True, default=str,
+                    separators=(",", ":"),
+                ).encode("utf-8", errors="replace")).hexdigest()
+            attachment_sources.append((filename, digest))
+        payload = {
+            "sender": str(mail.get("sender_email") or "").strip().casefold(),
+            "date": str(mail.get("date") or "").strip(),
+            "subject": str(subject or ""),
+            "body": str(mail.get("body_original") or mail.get("body_raw") or body or ""),
+            "attachments": attachment_sources,
+        }
+        return hashlib.sha256(json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8", errors="replace")).hexdigest()
 
     def _build_row(self, mail: dict, subject: str, body: str,
                    agent_result: dict, customer_result: dict,
