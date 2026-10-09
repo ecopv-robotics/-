@@ -148,3 +148,84 @@ def test_full_extraction_preserves_english_company_leading_letters():
     assert extractor._repair_truncated_company(
         "ampleZone Malta Limited", "ExampleZone Malta Limited 意大利包装法", ""
     ) == "ExampleZone Malta Limited"
+
+
+def test_company_suffix_from_unmatched_parenthetical_note_is_not_a_customer():
+    extractor = FieldExtractor({}, [], ocr_fallback=False)
+    rows = extractor.extract_fields({
+        "subject": "Example Agent-示例甲有限公司-荷兰电池法注销（欧洲店不运营）",
+        "body_text": "",
+        "attachments": [],
+    })
+    assert rows
+    assert all(row["客户"] == "示例甲有限公司" for row in rows)
+
+
+def test_short_latin_proxy_alias_does_not_truncate_real_company_prefix():
+    extractor = FieldExtractor({}, [], ocr_fallback=False, agent_identity_aliases={
+        "示例代理": ["Cl"],
+    })
+    assert extractor._strip_known_agent_prefix("ClickZone Malta Limited") == "ClickZone Malta Limited"
+    assert extractor._strip_known_agent_prefix("Cl-ClickZone Malta Limited") == "ClickZone Malta Limited"
+
+
+def test_registered_proxy_signature_matches_without_sender_email_candidate():
+    extractor = FieldExtractor({}, [], ocr_fallback=False, agent_identity_aliases={
+        "示例代理": ["华之星检测有限公司", "华之星"],
+    })
+    result = extractor._extract_agent(
+        "unknown@example.invalid", "普通业务主题", "正文内容\n\n华之星 WEEE-陈助理", [],
+    )
+    assert result["agent"] == "示例代理"
+    assert result["match_method"] == "签名代理别名精确匹配"
+
+
+def test_epr_application_projects_fall_back_to_explicit_single_applicant_scope():
+    extractor = FieldExtractor({}, [], ocr_fallback=False)
+    attachments = [{
+        "filename": "application.xlsx",
+        "epr_forms": [{"filename": "application.xlsx", "projects": []}],
+        "structured_records": [
+            {"record_type": "epr_application", "attachment_name": "application.xlsx",
+             "customer": "示例甲有限公司", "company_field": "company_name_zh",
+             "raw_text": "公司中文名称：示例甲有限公司"},
+            {"record_type": "epr_application", "attachment_name": "application.xlsx",
+             "customer": "SAMPLE ALPHA LIMITED", "company_field": "company_name_en",
+             "raw_text": "公司英文名称：SAMPLE ALPHA LIMITED"},
+            {"record_type": "weee_catalog", "attachment_name": "application.xlsx",
+             "customer": "SAMPLE ALPHA LIMITED", "brand": "SAMPLE BRAND",
+             "category": "Large equipment", "row_number": 8},
+        ],
+    }]
+    rows = extractor.extract_fields({
+        "subject": "示例甲有限公司-德国WEEE+德国电池法注册",
+        "body_text": "",
+        "attachments": attachments,
+    })
+    assert {(row["客户"], row["项目"]) for row in rows} == {
+        ("示例甲有限公司", "德国WEEE"), ("示例甲有限公司", "德国电池法"),
+    }
+
+
+def test_weee_category_record_is_never_expanded_as_customer_business():
+    extractor = FieldExtractor({}, [], ocr_fallback=False)
+    groups = extractor._attachment_structured_groups([{
+        "filename": "application.xlsx",
+        "structured_records": [{
+            "record_type": "weee_catalog", "customer": "SAMPLE ALPHA LIMITED",
+            "brand": "SAMPLE BRAND", "category": "Large equipment",
+            "row_number": 8,
+        }],
+    }], {"projects": [{"standard_name": "德国WEEE"}]})
+    assert groups == []
+
+
+def test_decode_replacement_character_forces_manual_review():
+    rows = FieldExtractor({}, [], ocr_fallback=False).extract_fields({
+        "subject": "SAMPLE ALPHA LIMITED 德国WEEE注册�",
+        "body_text": "",
+        "attachments": [],
+    })
+    assert rows
+    assert all(row["置信度"] == "需人工确认" for row in rows)
+    assert all(row["邮件解码状态"] == "检测到解码替代字符" for row in rows)

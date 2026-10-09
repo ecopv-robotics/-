@@ -1292,6 +1292,13 @@ class FieldExtractor:
                     "candidates": [],
                 }
 
+        # The signature is an independent evidence source. Search it even when
+        # the sender email has no fuzzy candidates; otherwise footer-only proxy
+        # identification silently remains "待确认" for the common case.
+        signature_match = self._extract_agent_from_signature(body)
+        if signature_match:
+            return signature_match
+
         # 模糊匹配 — 用发件人邮箱去模糊匹配代理邮箱表
         candidates = []
         for em, entry in self.agent_email_map.items():
@@ -1320,10 +1327,6 @@ class FieldExtractor:
                 "match_method": "邮箱模糊匹配",
                 "candidates": [],
             }
-
-        signature_match = self._extract_agent_from_signature(body)
-        if signature_match:
-            return signature_match
 
         # 多匹配 — 全部展示
         # 同一个代理常登记多个邮箱，直接 join 会拼出“向善 / 向善”这种重复值，
