@@ -811,9 +811,9 @@ class FieldExtractor:
                 # 按表单路径绑定；不能作为普通清单数据行重复展开。
                 if str(record.get("record_type") or "") == "epr_application":
                     continue
-                # 品牌/品类清单是 WEEE 专项证据，不是一个客户明细；
-                # 不把它展开成空公司工单行，避免破坏原有“附件行数=业务明细数”口径。
-                if str(record.get("record_type") or "") == "weee_catalog" and not str(record.get("customer") or "").strip():
+                # 品牌/品类清单始终是 WEEE 专项证据，不是申请人明细；
+                # 即使行内带了英文公司名，也不能覆盖申请表中的客户主体。
+                if str(record.get("record_type") or "") == "weee_catalog":
                     continue
                 sheet_name = str(record.get("sheet_name") or "工作表").strip()
                 row_number = record.get("row_number") or "?"
@@ -1747,6 +1747,8 @@ class FieldExtractor:
         text = str(value or "").strip()
         if not text:
             return "客户为空"
+        if text.count("(") != text.count(")") or text.count("（") != text.count("）"):
+            return "公司名含未配对括号，疑似截取片段"
         compact = re.sub(r"\s+", "", text).lower()
         hints = (
             "poa", "legalrepresentative", "legalperson", "legalpositions",
@@ -2720,18 +2722,35 @@ class FieldExtractor:
                             checked = [name for name in checked if name in declared]
                         names.extend(checked)
                         review = review or bool(form.get("unmatched_countries") or form.get("orphan_business"))
+                    if not names:
+                        related = [
+                            group for group in (text_groups or [])
+                            if normalize_text(group.get("customer", "")) in applicant["aliases"]
+                        ]
+                        related_names = [
+                            name for group in related for name in group.get("projects") or []
+                        ]
+                        if related_names:
+                            names.extend(related_names)
+                            review = review or any(group.get("needs_review") for group in related)
+                        elif len(applicants) == 1 and declared:
+                            names.extend(declared)
+                        elif declared:
+                            review = True
                 else:
                     # 先取已明确建立的该申请人关系，再取其文件名的项目证据。
                     for group in text_groups or []:
                         if normalize_text(group.get("customer", "")) in applicant["aliases"]:
                             names.extend(group.get("projects") or [])
                             review = review or bool(group.get("needs_review"))
-                    if not names:
+                    if not names and len(applicants) == 1:
                         names = [item["standard_name"] for item in self._drop_generic_epr(
                             self._extract_projects_by_rules(member)
                         ) if not item["standard_name"].endswith("EPR")]
-                    if not names and len(declared) == 1:
+                    if not names and len(applicants) == 1 and declared:
                         names = list(declared)
+                    elif not names and (declared or applicants):
+                        review = True
                 names = list(dict.fromkeys(names))
                 for index, candidate in enumerate(candidates, 1):
                     candidate["id"] = f"epr-company-{index}"
@@ -2801,13 +2820,25 @@ class FieldExtractor:
         application_groups = self._application_record_groups(
             attachments, subject, body, self._structured_groups(subject, body)
         )
+        if len(application_groups) == 1:
+            group = application_groups[0]
+            names = list(dict.fromkeys(
+                str(name).strip() for name in group.get("projects") or [] if str(name).strip()
+            ))
+            return {
+                "projects": [{"raw_value": name, "standard_name": name} for name in names],
+                "epr_form": all_forms[0] if all_forms else {"source": "附件EPR申请表格式化字段"},
+                "epr_forms_count": len(all_forms), "epr_form_groups": True,
+                "need_review": bool(group.get("needs_review") or not names),
+                "groups": application_groups,
+            }
         if len(application_groups) > 1:
             names = list(dict.fromkeys(
                 name for group in application_groups for name in group.get("projects") or []
             ))
             return {
                 "projects": [{"raw_value": name, "standard_name": name} for name in names],
-                "epr_form": all_forms[0] if all_forms else None,
+                "epr_form": all_forms[0] if all_forms else {"source": "附件EPR申请表格式化字段"},
                 "epr_forms_count": len(all_forms), "epr_form_groups": True,
                 "need_review": any(group.get("needs_review") for group in application_groups),
                 "groups": application_groups,

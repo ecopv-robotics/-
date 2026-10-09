@@ -462,6 +462,7 @@ class ExcelWriter:
             "字段LLM状态", "字段LLM失败原因", "业务规则校验状态", "业务规则问题编号", "业务规则问题",
             "附件证据", "邮件正文原文", "附件文件索引",
             "德国WEEE专项", "德国WEEE品类明细", "德国WEEE品类状态", "德国WEEE品类核对", "德国WEEE专项说明", "德国电池法品类明细",
+            "阶段一证据指纹",
         ]
 
         for col, header in enumerate(headers, 1):
@@ -524,6 +525,7 @@ class ExcelWriter:
                 row.get("德国WEEE品类核对", ""),
                 row.get("德国WEEE专项说明", ""),
                 row.get("德国电池法品类明细", ""),
+                row.get("阶段一证据指纹", ""),
             ]
             for col, val in enumerate(values, 1):
                 cell = ws.cell(row=row_idx, column=col, value=val)
@@ -535,7 +537,7 @@ class ExcelWriter:
                     ws.cell(row=row_idx, column=col).fill = COLOR_BLUE_FILL
                     ws.cell(row=row_idx, column=col).font = COLOR_BLUE_FONT
 
-        col_widths = [25, 28, 20, 40, 48, 35, 42, 14, 14, 20, 18, 22, 16, 28, 22, 18, 25, 10, 12, 36, 18, 36, 22, 30, 18, 20, 18, 45, 32, 32, 30, 36, 20, 20, 36, 20, 20, 55, 55, 16, 48, 20, 54, 34]
+        col_widths = [25, 28, 20, 40, 48, 35, 42, 14, 14, 20, 18, 22, 16, 28, 22, 18, 25, 10, 12, 36, 18, 36, 22, 30, 18, 20, 18, 45, 32, 32, 30, 36, 20, 20, 36, 20, 20, 55, 55, 16, 48, 20, 54, 34, 28]
         for idx, width in enumerate(col_widths, 1):
             ws.column_dimensions[get_column_letter(idx)].width = width
         ws.freeze_panes = "A2"
@@ -566,6 +568,7 @@ class ExcelWriter:
             "字段LLM状态", "字段LLM失败原因", "业务规则校验状态", "业务规则问题编号", "业务规则问题",
             "附件证据", "邮件正文原文", "附件文件索引",
             "德国WEEE专项", "德国WEEE品类明细", "德国WEEE品类状态", "德国WEEE品类核对", "德国WEEE专项说明", "德国电池法品类明细",
+            "阶段一证据指纹",
         ]
 
         for col, header in enumerate(headers, 1):
@@ -642,6 +645,7 @@ class ExcelWriter:
                 row.get("德国WEEE品类核对", ""),
                 row.get("德国WEEE专项说明", ""),
                 row.get("德国电池法品类明细", ""),
+                row.get("阶段一证据指纹", ""),
             ]
             for col, val in enumerate(values, 1):
                 cell = ws.cell(row=row_idx, column=col, value=val)
@@ -652,7 +656,7 @@ class ExcelWriter:
                 ws.cell(row=row_idx, column=col).fill = COLOR_ORANGE_FILL
                 ws.cell(row=row_idx, column=col).font = COLOR_ORANGE_FONT
 
-        col_widths = [25, 28, 20, 40, 48, 35, 42, 14, 14, 20, 18, 35, 22, 16, 28, 22, 10, 12, 36, 18, 36, 22, 30, 18, 20, 18, 45, 32, 32, 30, 36, 20, 20, 36, 20, 20, 42, 55, 55, 16, 48, 20, 54, 34]
+        col_widths = [25, 28, 20, 40, 48, 35, 42, 14, 14, 20, 18, 35, 22, 16, 28, 22, 10, 12, 36, 18, 36, 22, 30, 18, 20, 18, 45, 32, 32, 30, 36, 20, 20, 36, 20, 20, 42, 55, 55, 16, 48, 20, 54, 34, 28]
         for idx, width in enumerate(col_widths, 1):
             ws.column_dimensions[get_column_letter(idx)].width = width
         ws.freeze_panes = "A2"
