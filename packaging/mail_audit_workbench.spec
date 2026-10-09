@@ -1,0 +1,89 @@
+"""Windows onedir release for the current integrated mail-audit workbench."""
+
+from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
+
+
+PROJECT_ROOT = Path(SPECPATH).resolve().parent
+PACKAGE_NAME = "ECOPV_Mail_Audit_Workbench_2026-10-09"
+
+datas = [(str(PROJECT_ROOT / "workbench.html"), ".")]
+web_assets = PROJECT_ROOT / "web_console"
+for asset in web_assets.rglob("*"):
+    if asset.is_file():
+        relative_parent = asset.relative_to(web_assets).parent
+        destination = Path("web_console") / relative_parent
+        datas.append((str(asset), destination.as_posix()))
+
+binaries = []
+hiddenimports = []
+# PaddleOCR's public package eagerly imports its OCR classes, and PyInstaller's
+# normal analysis follows those imports. Collecting every PaddleOCR submodule
+# also pulls optional frameworks (for example TensorFlow) that this app never
+# calls. Paddle itself uses dynamic native modules, so keep its complete runtime.
+for package in ("paddle",):
+    package_datas, package_binaries, package_hiddenimports = collect_all(package)
+    datas.extend(package_datas)
+    binaries.extend(package_binaries)
+    hiddenimports.extend(package_hiddenimports)
+
+# The app uses only PaddleX's standard OCR pipeline. Collect its runtime config,
+# while leaving unrelated recognition pipelines and optional serving backends out.
+datas.extend(
+    collect_data_files(
+        "paddlex",
+        includes=[
+            "configs/pipelines/OCR.yaml",
+            "configs/pipelines/doc_preprocessor.yaml",
+        ],
+    )
+)
+
+# The OCR engine resolves package versions at runtime.
+for distribution in ("paddleocr", "paddlex", "paddlepaddle"):
+    datas.extend(copy_metadata(distribution))
+
+analysis = Analysis(
+    [str(PROJECT_ROOT / "web_app.py")],
+    pathex=[str(PROJECT_ROOT)],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[str(PROJECT_ROOT / "packaging" / "pyinstaller_hooks")],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[
+        "pytest", "IPython", "jupyter", "notebook",
+        "torch", "torch.*", "torchvision", "torchvision.*",
+        "paddlex.inference.genai", "paddlex.inference.genai.*",
+        "paddlex.inference.serving", "paddlex.inference.serving.*",
+    ],
+    noarchive=False,
+    optimize=0,
+)
+
+pyz = PYZ(analysis.pure)
+
+exe = EXE(
+    pyz,
+    analysis.scripts,
+    [],
+    exclude_binaries=True,
+    name="ECOPV_Mail_Audit_Workbench",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=True,
+    disable_windowed_traceback=False,
+)
+
+release = COLLECT(
+    exe,
+    analysis.binaries,
+    analysis.datas,
+    strip=False,
+    upx=False,
+    name=PACKAGE_NAME,
+)
