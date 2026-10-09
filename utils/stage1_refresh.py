@@ -274,7 +274,7 @@ def reset_review_range(state, rows, start, end, *, previous_active=None, replace
         return bool(day and start <= day <= end)
 
     occurrences = {}
-    for raw in [*rows, *(replacement_active or [])]:
+    for raw in rows:
         row = _canonical_payload(raw)
         if not in_range(row.get('发件日期')):
             continue
@@ -333,7 +333,7 @@ def reset_review_range(state, rows, start, end, *, previous_active=None, replace
 
 def publish_stage1(app_root, output_dir, categorized, active, filtered, date_from, date_to,
                    logger=None, cancelled=lambda: False):
-    """Stage files before acquiring the review lock; failed publication rolls back."""
+    """Publish staged files and evidence-matched review state atomically under the lock."""
     from modules.excel_writer import ExcelWriter
     from workbench_server import _read_sheet, _save_json
     root, output = Path(app_root), Path(output_dir)
@@ -345,22 +345,12 @@ def publish_stage1(app_root, output_dir, categorized, active, filtered, date_fro
     backup_root = root / 'storage' / 'stage1_refresh_backups'
     backup_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='stage1-publish-', dir=backup_root) as staging:
-        writer = ExcelWriter(staging, logger, categorized=categorized)
-        primary, review = writer.write_stage1_outputs(active, filtered)
-        filter_path = Path(primary).parent / 'filtered_mail_record.xlsx'
-        prepared = _read_sheet(Path(primary), '工单待查', '待查名单')
-        prepared.extend(_read_sheet(Path(review), '漏单复查', '人工补全'))
-        prepared_filtered = _read_sheet(filter_path, '过滤日志', '过滤日志')
-        if len(prepared) != len(active) or len(prepared_filtered) != len(filtered):
-            raise RuntimeError('新结果文件校验未通过，未覆盖原结果')
-        files = [(p, output / p.relative_to(staging)) for p in Path(staging).rglob('*.xlsx')]
-        primary_target = output / Path(primary).relative_to(staging)
-        review_target = output / Path(review).relative_to(staging)
         if cancelled():
             return None
         with WORKBENCH_DATA_LOCK:
             db = WorkbenchDatabase(default_database_path(root))
-            old_rows = db.read_rows('active') + db.read_rows('filtered')
+            old_database_active = db.read_rows('active')
+            old_rows = old_database_active + db.read_rows('filtered')
             legacy_active, legacy_filtered = [], []
             # Capture legacy row-number review IDs before replacing the old files.
             for path, sheet, source in (
@@ -374,7 +364,24 @@ def publish_stage1(app_root, output_dir, categorized, active, filtered, date_fro
             state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
             if not isinstance(state, dict):
                 raise ValueError('人工复核记录异常，已取消覆盖')
-            updated_state = reset_review_range(state, old_rows + prepared + prepared_filtered, start, end)
+            previous_active = _dedupe_previous_active(old_database_active, legacy_active)
+            updated_state = reset_review_range(
+                state, old_rows + legacy_active + legacy_filtered + active + filtered,
+                start, end, previous_active=previous_active, replacement_active=active,
+            )
+            # Write only after conflict hints have been added, so the workbook and
+            # workbench database receive the same review status and explanation.
+            writer = ExcelWriter(staging, logger, categorized=categorized)
+            primary, review = writer.write_stage1_outputs(active, filtered)
+            filter_path = Path(primary).parent / 'filtered_mail_record.xlsx'
+            prepared = _read_sheet(Path(primary), '工单待查', '待查名单')
+            prepared.extend(_read_sheet(Path(review), '漏单复查', '人工补全'))
+            prepared_filtered = _read_sheet(filter_path, '过滤日志', '过滤日志')
+            if len(prepared) != len(active) or len(prepared_filtered) != len(filtered):
+                raise RuntimeError('新结果文件校验未通过，未覆盖原结果')
+            files = [(p, output / p.relative_to(staging)) for p in Path(staging).rglob('*.xlsx')]
+            primary_target = output / Path(primary).relative_to(staging)
+            review_target = output / Path(review).relative_to(staging)
             if cancelled():
                 return None
             backup = Path(tempfile.mkdtemp(prefix=f'{start}_to_{end}-', dir=backup_root))
@@ -412,5 +419,6 @@ def publish_stage1(app_root, output_dir, categorized, active, filtered, date_fro
             _save_json(backup / 'manifest.json', manifest)
             if logger:
                 logger.info(f'阶段一按日期覆盖完成: {start} ~ {end}；旧明细 {report["removed"]} 条已归档，'
-                            f'新询单 {report["active"]} 条、过滤 {report["filtered"]} 条；人工记录已重置；备份: {backup}')
+                            f'新询单 {report["active"]} 条、过滤 {report["filtered"]} 条；人工状态按证据匹配迁移，'
+                            f'变化/歧义项转待复核；备份: {backup}')
             return str(primary_target), str(review_target)
