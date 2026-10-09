@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, copy_metadata
 
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
@@ -21,12 +21,9 @@ hiddenimports = []
 # PaddleOCR's public package eagerly imports its OCR classes, and PyInstaller's
 # normal analysis follows those imports. Collecting every PaddleOCR submodule
 # also pulls optional frameworks (for example TensorFlow) that this app never
-# calls. Paddle itself uses dynamic native modules, so keep its complete runtime.
-for package in ("paddle",):
-    package_datas, package_binaries, package_hiddenimports = collect_all(package)
-    datas.extend(package_datas)
-    binaries.extend(package_binaries)
-    hiddenimports.extend(package_hiddenimports)
+# calls. Paddle's Python imports are followed by analysis. Include its native
+# runtime libraries without sweeping optional modules into this release.
+binaries.extend(collect_dynamic_libs("paddle"))
 
 # The app uses only PaddleX's standard OCR pipeline. Collect its runtime config,
 # while leaving unrelated recognition pipelines and optional serving backends out.
@@ -41,7 +38,7 @@ datas.extend(
 )
 
 # The OCR engine resolves package versions at runtime.
-for distribution in ("paddleocr", "paddlex", "paddlepaddle"):
+for distribution in ("paddleocr", "paddlex", "paddlepaddle", "modelscope"):
     datas.extend(copy_metadata(distribution))
 
 analysis = Analysis(
