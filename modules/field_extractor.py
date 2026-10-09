@@ -2646,6 +2646,12 @@ class FieldExtractor:
                 self._extract_projects_by_rules(subject + " " + body)
             )
         ))
+
+        def member_projects(member):
+            return [item["standard_name"] for item in self._drop_generic_epr(
+                self._extract_projects_by_rules(member)
+            ) if not item["standard_name"].endswith("EPR")]
+
         output = []
         covered_aliases = set()
         priority = {"company_name_zh": 0, "company_name": 1, "applicant_name": 2, "company_name_en": 3}
@@ -2716,6 +2722,7 @@ class FieldExtractor:
                         used_forms.add(index)
                 review = not bool(candidates)
                 names = []
+                project_codes = {}
                 if matching_forms:
                     for form in matching_forms:
                         checked = list(dict.fromkeys(form.get("projects") or []))
@@ -2736,7 +2743,16 @@ class FieldExtractor:
                         if related_names:
                             names.extend(related_names)
                             review = review or any(group.get("needs_review") for group in related)
-                        elif len(applicants) == 1 and declared:
+                            for group in related:
+                                for project, codes in (group.get("project_codes") or {}).items():
+                                    if isinstance(codes, list):
+                                        project_codes.setdefault(project, [])
+                                        project_codes[project].extend(
+                                            code for code in codes if code not in project_codes[project]
+                                        )
+                        elif len(peers) == 1 and (local_projects := member_projects(member)):
+                            names.extend(local_projects)
+                        elif len(declared) == 1:
                             names.extend(declared)
                         elif declared:
                             review = True
@@ -2746,11 +2762,15 @@ class FieldExtractor:
                         if normalize_text(group.get("customer", "")) in applicant["aliases"]:
                             names.extend(group.get("projects") or [])
                             review = review or bool(group.get("needs_review"))
-                    if not names and len(applicants) == 1:
-                        names = [item["standard_name"] for item in self._drop_generic_epr(
-                            self._extract_projects_by_rules(member)
-                        ) if not item["standard_name"].endswith("EPR")]
-                    if not names and len(applicants) == 1 and declared:
+                            for project, codes in (group.get("project_codes") or {}).items():
+                                if isinstance(codes, list):
+                                    project_codes.setdefault(project, [])
+                                    project_codes[project].extend(
+                                        code for code in codes if code not in project_codes[project]
+                                    )
+                    if not names and len(peers) == 1:
+                        names = member_projects(member)
+                    if not names and len(declared) == 1:
                         names = list(declared)
                     elif not names and (declared or applicants):
                         review = True
@@ -2763,6 +2783,7 @@ class FieldExtractor:
                     "source": "附件EPR申请表格式化字段", "projects": names,
                     "company_candidates": candidates if len(candidates) > 1 else [],
                     "company_aliases": [candidates[1]["value"]] if bilingual_pair else [],
+                    "project_codes": project_codes,
                     "attachment_record_source": f"附件EPR申请表：{attachment_index + 1}:{member}" + (f" / {sheets}" if sheets else ""),
                     "needs_review": review or not names or (len(candidates) > 1 and not bilingual_pair),
                 })
