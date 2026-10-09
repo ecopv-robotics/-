@@ -577,6 +577,15 @@
   async function bulkConfirm(){const ids=[...app.selectedMailIds];if(!ids.length||app.view==='filtered')return;if(!confirm(`确定批量确认${ids.length}封邮件吗？仅字段完整且没有待复核明细的邮件会被确认。`))return;const mailNumbers=Object.fromEntries(ids.map(id=>{const m=(app.data?.mails||[]).find(x=>x.id===id);return [id,m?.mail_number||'']}));try{const j=await api('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'bulk_confirm',mail_ids:ids,mail_numbers:mailNumbers,reason:'批量人工确认：邮件字段已核对'})});app.selectedMailIds.clear();const skipped=j.skipped_count?`，跳过${j.skipped_count}封未解决邮件`:'';toast(`${j.message}${skipped}`);await load()}catch(e){toast(e.message)}}
   function beginActionFeedback(button){if(!button)return()=>{};const label=button.textContent;button.disabled=true;button.textContent='保存中…';button.dataset.saving='true';return()=>{if(button.isConnected){button.disabled=false;button.textContent=label;delete button.dataset.saving}}}
   function takeActionButton(){const button=app.pendingActionButton;app.pendingActionButton=null;return button}
+  // The correction dialog intentionally lets clicks pass through so evidence text remains selectable.
+  // Suppress click activation outside the dialog so a click on an underlying action cannot confirm/delete anything.
+  document.addEventListener('click',event=>{
+    const overlay=$('#modal-overlay');
+    if(!overlay?.classList.contains('show'))return;
+    const modal=overlay.querySelector('.modal');
+    if(modal?.contains(event.target))return;
+    event.preventDefault();event.stopImmediatePropagation();
+  },true);
   document.addEventListener('click',event=>{const button=event.target?.closest?.('#confirm,#return,[data-confirm-weee-item],[data-confirm-weee]');if(button)app.pendingActionButton=button},true);
   function syncLocalCounts(){
     if(!app.data)return;const details=(app.data.mails||[]).flatMap(mail=>mail.details||[]),counts={...(app.data.counts||{})};
@@ -697,7 +706,7 @@
     if(app.view==='inbox'||app.view==='unfinished'){
       if(app.filter==='all')mails=allInboxMails();
       else if(app.filter==='confirmed')mails=allInboxMails().map(mail=>projectMailForQueue(mail,'confirmed')).filter(Boolean);
-      else mails=pendingInboxMails().filter(mail=>mail.status===app.filter);
+      else mails=pendingInboxMails().filter(mail=>mail.status===app.filter).map(mail=>projectMailForQueue(mail,app.filter)).filter(Boolean);
       return rankSearchResults(mails.filter(matchMail));
     }
     if(!isFiltered&&!isMissing&&app.view!=='unfinished'&&app.filter!=='all'){
