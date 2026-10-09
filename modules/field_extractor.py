@@ -2823,7 +2823,11 @@ class FieldExtractor:
         application_groups = self._application_record_groups(
             attachments, subject, body, self._structured_groups(subject, body)
         )
-        if len(application_groups) == 1:
+        has_bound_applicant = any(
+            group.get("customer") or group.get("company_candidates")
+            for group in application_groups
+        )
+        if len(application_groups) == 1 and has_bound_applicant:
             group = application_groups[0]
             names = list(dict.fromkeys(
                 str(name).strip() for name in group.get("projects") or [] if str(name).strip()
@@ -2835,7 +2839,7 @@ class FieldExtractor:
                 "need_review": bool(group.get("needs_review") or not names),
                 "groups": application_groups,
             }
-        if len(application_groups) > 1:
+        if len(application_groups) > 1 and has_bound_applicant:
             names = list(dict.fromkeys(
                 name for group in application_groups for name in group.get("projects") or []
             ))
