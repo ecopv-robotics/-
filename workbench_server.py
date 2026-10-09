@@ -1500,6 +1500,7 @@ class WorkbenchStore:
                 raise RuntimeError("历史记录仍在保存，请稍后再次关闭工作台。")
 
     def _raw_records(self) -> List[Dict[str, Any]]:
+        batch = self._current_stage1_batch()
         records = _read_sheet(self.primary_path, "工单待查", "待查名单")
         # 当前选择的阶段一输出是主数据；复查表是另一条待补全队列。
         records.extend(_read_sheet(self.review_path, "漏单复查", "人工补全"))
@@ -1533,6 +1534,11 @@ class WorkbenchStore:
             # 当前 Excel 文件，后面的 ``if records`` 分支不会执行；因此这里
             # 先对数据库读取结果统一做展示层过滤，避免旧的 7 条项目重新出现。
             stored_display = _hide_superseded_review_rows(stored)
+            if batch:
+                start, end, _ = batch
+                # 日期覆盖已将该范围旧行从数据库退役；只展示最近一次阶段一
+                # 的范围，不再把范围外的历史邮件追加回当前复核队列。
+                return [row for row in stored_display if start <= _date_filter_key(row.get("发件日期")) <= end]
             if records:
                 fresh = list(display_records)
                 fresh_by_mail: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
@@ -1602,6 +1608,19 @@ class WorkbenchStore:
         # 测试/临时会话没有数据库覆盖层，也必须使用与正式工作台相同的
         # 未识别公司清空与待复核规则，避免把发件方说明句继续显示成客户。
         return list(display_records)
+
+    def _current_stage1_batch(self) -> Optional[Tuple[str, str, datetime]]:
+        """正式工作台以最近一次已发布的阶段一结果限定当前视图。"""
+        if self.test_mode or self.primary_path.resolve() != DEFAULT_PRIMARY.resolve():
+            return None
+        summary = _read_imap_summary()
+        start, end = summary.get("date_from", ""), summary.get("date_to", "")
+        created = _mail_date_sort_value(summary.get("created_at"))
+        if not (start and end and start <= end and created != datetime.min):
+            return None
+        if not all(path.exists() for path in (self.primary_path, self.review_path, self.filtered_path)):
+            return None
+        return start, end, created
 
     def _state(self) -> Dict[str, Any]:
         return _load_json(self.state_path)
@@ -1969,6 +1988,12 @@ class WorkbenchStore:
                     if key not in replaced
                 )
                 rows = merged
+        batch = self._current_stage1_batch()
+        if batch:
+            _, _, published_at = batch
+            # 旧阶段二结论不属于本次阶段一；只有本次发布后重新核对的结果
+            # 才允许回填当前队列，避免显示上一次调试的“已查/漏单”状态。
+            rows = [row for row in rows if _mail_date_sort_value(row.get("查询时间戳")) >= published_at]
         return rows
 
     def _workorder_summaries(self) -> Dict[Tuple[str, str, str], Dict[str, Any]]:
@@ -2287,6 +2312,10 @@ class WorkbenchStore:
                 stored_filtered = self.database.read_rows("filtered")
                 if stored_filtered:
                     filtered = stored_filtered
+            batch = self._current_stage1_batch()
+            if batch:
+                start, end, _ = batch
+                filtered = [row for row in filtered if start <= _date_filter_key(row.get("发件日期")) <= end]
             # 过滤邮件单独提供给工作台的“已过滤邮件”视图。这里不沿用主队列
             # 的 settled 过滤规则：即使是已经确认的证书通知/非注册业务，仍要
             # 保留原始证据，方便人工追溯“为什么没有进入询单队列”。
@@ -2384,6 +2413,8 @@ class WorkbenchStore:
                 if mail_id in known_ids or not isinstance(bucket, dict):
                     continue
                 meta_raw = bucket.get("mail") if isinstance(bucket.get("mail"), dict) else {}
+                if batch and not batch[0] <= _date_filter_key(meta_raw.get("date")) <= batch[1]:
+                    continue
                 meta = {k: _text(meta_raw.get(k)) for k in ("sender", "date", "subject", "body", "attachments")}
                 key = (meta["sender"], meta["date"], meta["subject"])
                 if key in groups:  # 同键邮件已在队列里，不要覆盖它原有明细

@@ -1,5 +1,6 @@
 """Anonymous date replacement regressions; no mailbox, LLM, or live business data."""
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,15 @@ def test_empty_publish_does_not_fall_back_to_old_excel(tmp_path):
     store = WorkbenchStore(str(cache), str(review), state_path=str(state))
     store.database = db
     assert {r['客户公司名称'] for r in store._raw_records()} == {'Fixture 506454f2 Ltd'}
+
+
+def test_latest_stage1_view_hides_other_dates_without_deleting_history(tmp_path):
+    output, primary, review, db, state = setup_old(tmp_path)
+    store = WorkbenchStore(str(primary), str(review), state_path=str(state))
+    store.database = db
+    store._current_stage1_batch = lambda: ('2026-08-26', '2026-08-28', datetime(2026, 10, 9, 11, 17, 48))
+    assert {r['客户公司名称'] for r in store._raw_records()} == {'Fixture 7f43c514 Ltd'}
+    assert len(db.read_rows('active')) == 2  # 历史仍在数据库中
 
 
 def test_transaction_failure_restores_records_and_date_marker(tmp_path):
