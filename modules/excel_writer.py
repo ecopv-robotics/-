@@ -30,6 +30,12 @@ THIN_BORDER = Border(
     bottom=Side(style="thin", color="B0B0B0"),
 )
 
+WORKORDER_RESULT_HEADERS = [
+    "类别", "代理", "国家", "具体业务", "公司名称", "品牌", "分类",
+    "是否成功", "失败原因",
+]
+WORKORDER_RESULT_WIDTHS = [16, 20, 14, 38, 32, 30, 36, 12, 52]
+
 # 阶段一输出 xlsx 的「表头名 → 内部字段名」映射。
 # 阶段二「独立运行」是从阶段一 xlsx 反读数据行的, 那批 dict 的键是中文表头;
 # 若不还原成内部键, 下游按 row.get("客户") / row.get("项目") 取值为空,
@@ -107,6 +113,49 @@ class ExcelWriter:
     def _log(self, msg, level="info"):
         if self.logger:
             getattr(self.logger, level)(msg)
+
+    @staticmethod
+    def _populate_workorder_result_sheet(ws, result_rows: List[List[str]]) -> None:
+        """Write the shared nine-column result table used by both pipeline stages."""
+        ws.append(WORKORDER_RESULT_HEADERS)
+        for cell in ws[1]:
+            cell.fill = COLOR_HEADER_FILL
+            cell.font = COLOR_HEADER_FONT
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = THIN_BORDER
+
+        for output_row, values in enumerate(result_rows, 2):
+            for col_idx, value in enumerate(values, 1):
+                cell = ws.cell(row=output_row, column=col_idx, value=value)
+                cell.border = THIN_BORDER
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
+                if col_idx == 8 and value == "否":
+                    cell.fill = COLOR_RED_FILL
+                    cell.font = COLOR_RED_FONT
+                if col_idx == 9 and value:
+                    cell.fill = COLOR_YELLOW_FILL
+                    cell.font = COLOR_YELLOW_FONT
+            estimated_lines = max(
+                1,
+                *(max(1, (len(str(value or "")) + width - 1) // width)
+                  for value, width in zip(values, WORKORDER_RESULT_WIDTHS)),
+            )
+            ws.row_dimensions[output_row].height = min(72, max(24, estimated_lines * 16 + 8))
+
+        for idx, width in enumerate(WORKORDER_RESULT_WIDTHS, 1):
+            ws.column_dimensions[get_column_letter(idx)].width = width
+        ws.row_dimensions[1].height = 28
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+
+    def _write_stage1_result_view(self, wb, rows: List[Dict], state: str) -> None:
+        """Add a concise, Stage-2-shaped view while preserving the raw source sheet."""
+        ws = wb.create_sheet("阶段一结果", 0)
+        result_rows: List[List[str]] = []
+        for row in rows:
+            result_rows.extend(self._workorder_export_values(row, state))
+        self._populate_workorder_result_sheet(ws, result_rows)
+        wb.active = wb.sheetnames.index(ws.title)
 
     def write_missing_report(self, rows: List[Dict]) -> str:
         """生成漏单清单 Excel"""
@@ -490,6 +539,8 @@ class ExcelWriter:
         for idx, width in enumerate(col_widths, 1):
             ws.column_dimensions[get_column_letter(idx)].width = width
         ws.freeze_panes = "A2"
+        self._write_stage1_result_view(wb, rows, "stage1_pending")
+        ws.sheet_state = "hidden"
         self._add_change_tracking_sheets(wb)
         stable = self._save_pair(wb, stable, ts, "工单待查清单")
         self._log(f"工单待查清单: {stable} ({len(rows)} 行)")
@@ -605,6 +656,13 @@ class ExcelWriter:
         for idx, width in enumerate(col_widths, 1):
             ws.column_dimensions[get_column_letter(idx)].width = width
         ws.freeze_panes = "A2"
+        review_rows = []
+        for row in rows:
+            summary_row = dict(row)
+            summary_row["_stage1_review_reason"] = self._review_hint(row)
+            review_rows.append(summary_row)
+        self._write_stage1_result_view(wb, review_rows, "stage1_review")
+        ws.sheet_state = "hidden"
         self._add_change_tracking_sheets(wb)
         stable = self._save_pair(wb, stable, ts, "漏单复查清单")
         self._log(f"漏单复查清单: {stable} ({len(rows)} 行)")
@@ -663,6 +721,18 @@ class ExcelWriter:
         for idx, width in enumerate(col_widths, 1):
             ws.column_dimensions[get_column_letter(idx)].width = width
         ws.freeze_panes = "A2"
+        summary_rows = []
+        for mail in filtered_mails:
+            summary_row = dict(mail)
+            summary_row["项目"] = mail.get("filter_object") or mail.get("项目") or ""
+            summary_row["国家"] = mail.get("filter_country") or mail.get("国家") or ""
+            summary_row["代理"] = mail.get("filter_agent") or mail.get("代理") or ""
+            summary_row["客户"] = mail.get("filter_company") or mail.get("客户") or ""
+            summary_row["需求"] = mail.get("filter_request") or mail.get("需求") or ""
+            summary_row["_stage1_filter_reason"] = mail.get("filter_reason") or ""
+            summary_rows.append(summary_row)
+        self._write_stage1_result_view(wb, summary_rows, "stage1_filtered")
+        ws.sheet_state = "hidden"
         stable_path = self._save_pair(wb, stable_path, ts_path, "过滤日志")
         self._log(f"过滤日志: {stable_path} ({len(filtered_mails)} 行)")
         return stable_path
@@ -746,6 +816,16 @@ class ExcelWriter:
         skip_reason = str(row.get("_skip_reason") or "").strip()
         date_note = str(row.get("日期筛选说明") or "").strip()
 
+        if state == "stage1_pending":
+            return "否", "阶段一已提取，尚未执行阶段二工单核验"
+        if state == "stage1_review":
+            review_reason = str(row.get("_stage1_review_reason") or cls._review_hint(row) or "").strip()
+            reason = "阶段一待人工复核"
+            return "否", f"{reason}：{review_reason}；完成复核后再运行阶段二" if review_reason else f"{reason}，完成复核后再运行阶段二"
+        if state == "stage1_filtered":
+            filter_reason = str(row.get("_stage1_filter_reason") or "").strip()
+            reason = "阶段一已过滤，未进入阶段二工单核验"
+            return "否", f"{reason}：{filter_reason}" if filter_reason else reason
         if state == "skipped":
             return "否", skip_reason or query_error or match_status or "前置校验未通过，跳过查询"
         if state == "pending":
@@ -913,22 +993,9 @@ class ExcelWriter:
         wb = Workbook()
         ws = wb.active
         ws.title = "工单核对"
-        headers = [
-            "类别", "代理", "国家", "具体业务", "公司名称", "品牌", "分类",
-            "是否成功", "失败原因",
-        ]
-        ws.append(headers)
-        for cell in ws[1]:
-            cell.fill = COLOR_HEADER_FILL
-            cell.font = COLOR_HEADER_FONT
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = THIN_BORDER
-
         queried = {id(row) for row in (to_query or [])}
         skipped_ids = {id(row) for row in (skipped or [])}
-        column_widths = [16, 20, 14, 38, 32, 30, 36, 12, 52]
-
-        output_row = 2
+        result_rows: List[List[str]] = []
         for row in all_rows:
             if id(row) in queried:
                 state = "queried"
@@ -936,30 +1003,8 @@ class ExcelWriter:
                 state = "skipped"
             else:
                 state = "pending"
-            for values in self._workorder_export_values(row, state):
-                for col_idx, value in enumerate(values, 1):
-                    cell = ws.cell(row=output_row, column=col_idx, value=value)
-                    cell.border = THIN_BORDER
-                    cell.alignment = Alignment(vertical="center", wrap_text=True)
-                    if col_idx == 8 and value == "否":
-                        cell.fill = COLOR_RED_FILL
-                        cell.font = COLOR_RED_FONT
-                    if col_idx == 9 and value:
-                        ws.cell(row=output_row, column=9).fill = COLOR_YELLOW_FILL
-                        ws.cell(row=output_row, column=9).font = COLOR_YELLOW_FONT
-                estimated_lines = max(
-                    1,
-                    *(max(1, (len(str(value or "")) + width - 1) // width)
-                      for value, width in zip(values, column_widths)),
-                )
-                ws.row_dimensions[output_row].height = min(72, max(24, estimated_lines * 16 + 8))
-                output_row += 1
-
-        for idx, width in enumerate(column_widths, 1):
-            ws.column_dimensions[get_column_letter(idx)].width = width
-        ws.row_dimensions[1].height = 28
-        ws.freeze_panes = "A2"
-        ws.auto_filter.ref = ws.dimensions
+            result_rows.extend(self._workorder_export_values(row, state))
+        self._populate_workorder_result_sheet(ws, result_rows)
         # 保存交给调用方（_save_pair），保证时序副本先落盘、稳定名被占用时不丢结果
         return wb
 
