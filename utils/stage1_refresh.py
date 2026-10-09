@@ -347,6 +347,16 @@ def publish_stage1(app_root, output_dir, categorized, active, filtered, date_fro
     with tempfile.TemporaryDirectory(prefix='stage1-publish-', dir=backup_root) as staging:
         if cancelled():
             return None
+        writer = ExcelWriter(staging, logger, categorized=categorized)
+        old_primary_target = output / Path(
+            writer._category_path('stage1', 'to_workorder_list.xlsx')
+        ).relative_to(staging)
+        old_review_target = output / Path(
+            writer._category_path('stage1', 'to_review_list.xlsx')
+        ).relative_to(staging)
+        old_filter_target = output / Path(
+            writer._category_path('stage1', 'filtered_mail_record.xlsx')
+        ).relative_to(staging)
         with WORKBENCH_DATA_LOCK:
             db = WorkbenchDatabase(default_database_path(root))
             old_database_active = db.read_rows('active')
@@ -354,9 +364,9 @@ def publish_stage1(app_root, output_dir, categorized, active, filtered, date_fro
             legacy_active, legacy_filtered = [], []
             # Capture legacy row-number review IDs before replacing the old files.
             for path, sheet, source in (
-                (primary_target, '工单待查', '待查名单'),
-                (review_target, '漏单复查', '人工补全'),
-                (primary_target.parent / 'filtered_mail_record.xlsx', '过滤日志', '过滤日志'),
+                (old_primary_target, '工单待查', '待查名单'),
+                (old_review_target, '漏单复查', '人工补全'),
+                (old_filter_target, '过滤日志', '过滤日志'),
             ):
                 legacy = _read_sheet(path, sheet, source)
                 old_rows.extend(legacy)
@@ -366,7 +376,7 @@ def publish_stage1(app_root, output_dir, categorized, active, filtered, date_fro
                 raise ValueError('人工复核记录异常，已取消覆盖')
             previous_active = _dedupe_previous_active(old_database_active, legacy_active)
             updated_state = reset_review_range(
-                state, old_rows + legacy_active + legacy_filtered + active + filtered,
+                state, old_rows + active + filtered,
                 start, end, previous_active=previous_active, replacement_active=active,
             )
             # Write only after conflict hints have been added, so the workbook and
