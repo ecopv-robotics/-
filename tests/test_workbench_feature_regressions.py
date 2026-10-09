@@ -393,3 +393,13 @@ def test_confirmations_apply_locally_and_preserve_queue_and_detail_position():
     assert "await load()" not in weee_confirmation
     assert "restoreNavigationScroll(navigation)" in weee_confirmation
     assert "保存中…" in html
+
+
+def test_inbox_all_includes_confirmed_business_and_keeps_confirmed_filter():
+    html = Path("workbench.html").read_text(encoding="utf-8")
+    inbox = html.split("function queueMails(){", 1)[1].split("function queueCountLabel(", 1)[0]
+    assert "if(app.filter==='all')mails=allInboxMails()" in inbox
+    assert "app.filter==='confirmed'" in inbox
+    assert "projectMailForQueue(mail,'confirmed')" in inbox
+    assert "if(inbox&&app.filter==='confirmed')app.filter='all'" not in html
+    assert "completed.textContent='已确认 '" in html

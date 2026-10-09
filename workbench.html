@@ -695,8 +695,9 @@
     const isFiltered=app.view==='filtered',isMissing=app.view==='missing';
     let mails=isFiltered?filteredMails():(isMissing?(app.data.missing_mails||[]):(app.data.mails||[]));
     if(app.view==='inbox'||app.view==='unfinished'){
-      mails=pendingInboxMails();
-      if(app.filter!=='all')mails=mails.filter(mail=>mail.status===app.filter);
+      if(app.filter==='all')mails=allInboxMails();
+      else if(app.filter==='confirmed')mails=allInboxMails().map(mail=>projectMailForQueue(mail,'confirmed')).filter(Boolean);
+      else mails=pendingInboxMails().filter(mail=>mail.status===app.filter);
       return rankSearchResults(mails.filter(matchMail));
     }
     if(!isFiltered&&!isMissing&&app.view!=='unfinished'&&app.filter!=='all'){
@@ -1298,8 +1299,8 @@
   }
   const _renderDetailWithAttachmentLinks=renderDetail;
   renderDetail=function(){_renderDetailWithAttachmentLinks();enhanceRawAttachmentLinks()};
-  // German WEEE/battery mail is routed once; mixed projects stay editable here.
-  // Completed records stay in storage, while the ordinary inbox is pending-only.
+  // German WEEE/battery mail is routed once; completed ordinary business remains
+  // visible under "全部" and can also be inspected under "已确认".
   const WEEE_CLASS_NAMES={1:'热交换设备',2:'屏幕和显示设备',3:'灯具和光源',4:'大型设备',5:'小型设备',6:'小型信息和电信设备'};
   function weeeDetailsOf(mail){return (mail?.details||[]).filter(detail=>detail?.weee?.enabled)}
   function isGermanSpecialDetail(detail){
@@ -1313,8 +1314,11 @@
     return pending.some(detail=>['review','returned','needs_info'].includes(detail.status))?'review':'ready';
   }
   function pendingInboxMails(){
-    return (app.data?.mails||[]).filter(mail=>dateMatches(mail)&&!isGermanSpecialMail(mail))
+    return allInboxMails()
       .map(mail=>({...mail,status:pendingMailStatus(mail)})).filter(mail=>mail.status);
+  }
+  function allInboxMails(){
+    return (app.data?.mails||[]).filter(mail=>dateMatches(mail)&&!isGermanSpecialMail(mail));
   }
   function firstWeeeDetail(mail){return (mail?.details||[]).find(isGermanSpecialDetail)||mail?.details?.[0]||null}
   function weeeMailsForView(){
@@ -1719,13 +1723,12 @@
     });
   };
 
-  // Inbox is a pending-mail queue; reviewed and ready buckets never overlap.
+  // "全部" includes confirmed business; pending and confirmed tabs remain separate.
   const renderBeforePendingInbox=render;
   render=function(){
     const inbox=app.view==='inbox'||app.view==='unfinished';
-    if(inbox&&app.filter==='confirmed')app.filter='all';
     const completed=document.querySelector('[data-filter="confirmed"]');
-    if(completed)completed.style.display=inbox?'none':'';
+    if(completed)completed.style.display='';
     document.querySelectorAll('[data-filter]').forEach(button=>button.classList.toggle('on',button.dataset.filter===app.filter));
     renderBeforePendingInbox();
     const pending=pendingInboxMails();
@@ -1735,6 +1738,7 @@
     }
     if(inbox){
       $('#queue-title').textContent='询单复核';
+      if(completed)completed.textContent='已确认 '+allInboxMails().filter(mail=>(mail.details||[]).some(detailStage2Ready)).length;
       const active=(app.data?.mails||[]).filter(dateMatches),filtered=(app.data?.filtered_mails||[]).filter(dateMatches),emailFiltered=filtered.filter(mail=>mail.scope!=='业务项目');
       const stats=[['IMAP读取邮件',app.data?.counts?.imap_read_total||'—'],['邮件总数',active.length+emailFiltered.length],
         ['询单待处理',pending.length],['待处理业务',pending.flatMap(mail=>mail.details||[]).filter(detail=>!detailStage2Ready(detail)).length],
