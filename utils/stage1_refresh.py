@@ -162,22 +162,13 @@ def _migrate_review_records(state, previous_active, replacement_active, start, e
             "entry": _state_entry_for_row(state, row),
         })
 
-    ordered_work, ordered_review = ExcelWriter._partition_rows(replacement_active)
-    occurrences = Counter()
     new_rows = []
-    new_ids = {}
-    for raw in [*ordered_work, *ordered_review]:
+    for raw in replacement_active:
         row = _canonical_payload(raw)
         if not in_range(row):
             continue
-        base = _record_base(row)
-        occurrence = occurrences[base]
-        occurrences[base] += 1
-        record_id = _key(f"active|{base}|{occurrence}")
-        item = {"row": raw, "payload": row, "mail": _mail_identity(row),
-                "base": base, "record_id": record_id}
-        new_ids[id(raw)] = record_id
-        new_rows.append(item)
+        new_rows.append({"row": raw, "payload": row, "mail": _mail_identity(row),
+                         "base": _record_base(row)})
 
     old_by_mail, new_by_mail = defaultdict(list), defaultdict(list)
     for item in old_rows:
@@ -185,11 +176,11 @@ def _migrate_review_records(state, previous_active, replacement_active, start, e
     for item in new_rows:
         new_by_mail[item["mail"]].append(item)
 
-    migrations, conflict_reasons = {}, defaultdict(set)
+    migrations_by_row, replacement_ids = {}, set()
     for mail_id, old_group in old_by_mail.items():
         new_group = new_by_mail.get(mail_id, [])
         old_left, new_left = set(range(len(old_group))), set(range(len(new_group)))
-        matched_new_ids = set()
+        conflict_reasons = defaultdict(set)
 
         def resolve(old_index, new_index, same_base):
             old_item, new_item = old_group[old_index], new_group[new_index]
@@ -199,19 +190,18 @@ def _migrate_review_records(state, previous_active, replacement_active, start, e
             entry = old_item["entry"]
             if not entry:
                 return
-            new_id = new_item["record_id"]
-            matched_new_ids.add(new_id)
+            new_row_id = id(new_item["row"])
             if same_base and relation == "same_strong":
-                migrations[new_id] = entry
+                migrations_by_row[new_row_id] = entry
                 return
             if same_base and relation == "same_weak":
                 reason = "旧记录缺少完整证据指纹；人工修正保留为草稿，确认状态已转待复核"
-                migrations[new_id] = _downgrade_manual_state(entry, reason)
+                migrations_by_row[new_row_id] = _downgrade_manual_state(entry, reason)
                 conflict_reasons[new_index].add(reason)
                 return
             if not same_base and relation == "same_strong":
                 reason = "原始证据相同但提取的公司/项目/需求已变化；旧修正仅作草稿，请人工复核"
-                migrations[new_id] = _downgrade_manual_state(entry, reason)
+                migrations_by_row[new_row_id] = _downgrade_manual_state(entry, reason)
                 conflict_reasons[new_index].add(reason)
                 return
             reason = "重跑后原始证据已变化或无法核实；旧人工确认未继承，请人工复核新结果"
@@ -242,65 +232,49 @@ def _migrate_review_records(state, previous_active, replacement_active, start, e
             # An unexplained removed/ambiguous sibling invalidates otherwise copied
             # confirmations from the same email until a reviewer checks the set.
             for index, item in enumerate(new_group):
-                record_id = item["record_id"]
-                if record_id in migrations:
-                    migrations[record_id] = _downgrade_manual_state(migrations[record_id], reason)
+                row_id = id(item["row"])
+                if row_id in migrations_by_row:
+                    migrations_by_row[row_id] = _downgrade_manual_state(migrations_by_row[row_id], reason)
                     conflict_reasons[index].add(reason)
+        for index, reasons in conflict_reasons.items():
+            for reason in reasons:
+                _mark_refresh_conflict(new_group[index]["row"], reason)
 
-    for mail_id, group in new_by_mail.items():
-        for index, item in enumerate(group):
-            reasons = conflict_reasons.get(index) if False else None
-        # Conflict indexes are mail-local; apply them in the matching local group below.
-    for mail_id, old_group in old_by_mail.items():
-        group = new_by_mail.get(mail_id, [])
-        # conflict_reasons are keyed by the row index within the local group.
-        for index, item in enumerate(group):
-            # ``conflict_reasons`` above is intentionally local per mail; the local
-            # map is reconstructed from the accumulated reason entries below.
-            pass
-
-    # Apply row hints from mappings accumulated with their record IDs. This separate
-    # map avoids relying on workbook row order for duplicate businesses.
-    reasons_by_record = defaultdict(set)
-    for mail_id, old_group in old_by_mail.items():
-        new_group = new_by_mail.get(mail_id, [])
-        # Re-evaluate unresolved/conflicting mappings using source identity and base.
-        # The exact per-row reasons are retained in the closure-local map below.
-        old_manual = [item for item in old_group if item["entry"]]
-        if old_manual and new_group:
-            for new_item in new_group:
-                new_id = new_item["record_id"]
-                if new_id in migrations and migrations[new_id].get("status") != "review":
-                    continue
-                if new_id not in migrations:
-                    reasons_by_record[new_id].add(
-                        "同一封邮件存在待核对的旧确认状态；本次提取未建立可信唯一对应，请人工复核"
-                    )
-
-    # The loop-local conflict reasons are carried on migration drafts; non-migrated
-    # conflicts are conservatively marked at mail level when old manual state exists.
-    for item in new_rows:
-        record_id = item["record_id"]
-        if record_id in reasons_by_record:
-            for reason in reasons_by_record[record_id]:
-                _mark_refresh_conflict(item["row"], reason)
-    return migrations
+    # IDs depend on the active/review sheet partition. Conflict rows were just
+    # downgraded to review, so compute IDs only after applying those review hints.
+    ordered_work, ordered_review = ExcelWriter._partition_rows(replacement_active)
+    occurrences = Counter()
+    migrations = {}
+    for raw in [*ordered_work, *ordered_review]:
+        row = _canonical_payload(raw)
+        if not in_range(row):
+            continue
+        base = _record_base(row)
+        occurrence = occurrences[base]
+        occurrences[base] += 1
+        record_id = _key(f"active|{base}|{occurrence}")
+        replacement_ids.add(record_id)
+        if id(raw) in migrations_by_row:
+            migrations[record_id] = migrations_by_row[id(raw)]
+    return migrations, replacement_ids
 
 
 def reset_review_range(state, rows, start, end, *, previous_active=None, replacement_active=None):
     """Clear date-scoped overlays, migrating only uniquely matched source-backed state."""
     result = copy.deepcopy(state)
     ids, mail_ids = set(), set()
-    migrated = {}
+    migrated, replacement_ids = {}, set()
     if previous_active is not None and replacement_active is not None:
-        migrated = _migrate_review_records(state, previous_active, replacement_active, start, end)
+        migrated, replacement_ids = _migrate_review_records(
+            state, previous_active, replacement_active, start, end
+        )
 
     def in_range(value):
         day = _date_key(value)[:10]
         return bool(day and start <= day <= end)
 
     occurrences = {}
-    for raw in rows:
+    for raw in [*rows, *(replacement_active or [])]:
         row = _canonical_payload(raw)
         if not in_range(row.get('发件日期')):
             continue
@@ -314,6 +288,7 @@ def reset_review_range(state, rows, start, end, *, previous_active=None, replace
             ids.add(_key(f'{dataset}|{base}|{occurrence}'))
         identity = '|'.join(str(row.get(k) or '') for k in ('发件人邮箱', '发件日期', '邮件主题'))
         mail_ids.add(hashlib.sha1(identity.encode('utf-8', errors='ignore')).hexdigest()[:16])
+    ids.update(replacement_ids)
 
     added = result.get('added', {})
     for mail_id, bucket in list(added.items()):
