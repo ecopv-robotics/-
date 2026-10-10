@@ -1,10 +1,10 @@
 ﻿$ErrorActionPreference = 'Stop'
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$releaseName = 'ECOPV_Mail_Audit_Workbench_2026-10-09'
+$releaseName = 'ECOPV_Mail_Audit_Workbench_2026-10-10'
 $releaseDir = Join-Path (Join-Path $projectRoot 'dist') $releaseName
 $archivePath = Join-Path (Join-Path $projectRoot 'dist') ($releaseName + '.zip')
-$buildPath = Join-Path (Join-Path $projectRoot 'build') 'pyinstaller-20261009'
+$buildPath = Join-Path (Join-Path $projectRoot 'build') 'pyinstaller-20261010'
 $ocrModelNames = @(
     'PP-LCNet_x1_0_doc_ori',
     'PP-LCNet_x1_0_textline_ori',
