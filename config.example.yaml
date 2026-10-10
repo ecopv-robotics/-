@@ -1,6 +1,6 @@
 # Copy to config.yaml (git-ignored), then configure locally.
 email:
-  imap_server: imap.example.invalid
+  imap_server: imap.qiye.aliyun.com
   imap_port: 993
   address: ''
   password: ''
