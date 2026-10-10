@@ -1,10 +1,10 @@
 ﻿$ErrorActionPreference = 'Stop'
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$releaseName = 'ECOPV_Mail_Audit_Workbench_2026-10-10'
+$releaseName = 'ECOPV_Mail_Audit_Workbench_2026-10-10-r2'
 $releaseDir = Join-Path (Join-Path $projectRoot 'dist') $releaseName
 $archivePath = Join-Path (Join-Path $projectRoot 'dist') ($releaseName + '.zip')
-$buildPath = Join-Path (Join-Path $projectRoot 'build') 'pyinstaller-20261010'
+$buildPath = Join-Path (Join-Path $projectRoot 'build') 'pyinstaller-20261010-r2'
 $ocrModelNames = @(
     'PP-LCNet_x1_0_doc_ori',
     'PP-LCNet_x1_0_textline_ori',
@@ -72,6 +72,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'workbench.html') -Destination (J
 Copy-Item -LiteralPath (Join-Path $projectRoot 'web_console') -Destination $releaseDir -Recurse
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'start_workbench.bat') -Destination (Join-Path $releaseDir '启动工作台.bat')
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot '操作使用说明.md') -Destination (Join-Path $releaseDir '操作使用说明.md')
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'assets\业务测试反馈表.xlsx') -Destination (Join-Path $releaseDir '业务测试反馈表.xlsx')
 $ocrModelTarget = Join-Path $releaseDir 'model_cache\official_models'
 New-Item -ItemType Directory -Path $ocrModelTarget -Force | Out-Null
 foreach ($modelName in $ocrModelNames) {

@@ -40,7 +40,7 @@
     state=data;csrf=data.csrf;connected=true;$('build').textContent=data.build;
     if(initial){const saved=data.session;$('mode').value=['stage1','stage2','all'].includes(saved.mode)?saved.mode:'stage1';
       $('date-from').value=saved.date_from;$('date-to').value=saved.date_to;
-      $('email-address').value=data.credentials.email_address;$('workorder-url').value=data.credentials.workorder_url||'';$('wo-user').value=data.credentials.workorder_username;modeChanged();initial=false;}
+      $('email-address').value=data.credentials.email_address;$('wo-user').value=data.credentials.workorder_username;modeChanged();initial=false;}
     $('email-password').placeholder=data.credentials.email_password_set?'已配置，留空保持不变':'尚未配置，请填写';
     $('wo-password').placeholder=data.credentials.workorder_password_set?'已配置，留空保持不变':'尚未配置，请填写';
     for(const role of ['agent','internal','project'])$('file-'+role).textContent=data.imports[role]||'尚未导入';
@@ -66,7 +66,7 @@
   $('mode').addEventListener('change',modeChanged);
   $('run-form').addEventListener('submit',event=>{event.preventDefault();action(()=>request('start',{mode:$('mode').value,date_from:$('date-from').value,date_to:$('date-to').value,input_token:$('stage2-file').value,force_live_query:true}));});
   $('stop').addEventListener('click',()=>action(()=>request('stop')));
-  $('settings-form').addEventListener('submit',event=>{event.preventDefault();action(async()=>{const result=await request('settings',{email_address:$('email-address').value,email_password:$('email-password').value,workorder_url:$('workorder-url').value,workorder_username:$('wo-user').value,workorder_password:$('wo-password').value});$('email-password').value=$('wo-password').value='';return result;});});
+  $('settings-form').addEventListener('submit',event=>{event.preventDefault();action(async()=>{const result=await request('settings',{email_address:$('email-address').value,email_password:$('email-password').value,workorder_username:$('wo-user').value,workorder_password:$('wo-password').value});$('email-password').value=$('wo-password').value='';return result;});});
   document.querySelectorAll('input[data-role]').forEach(input=>input.addEventListener('change',()=>{const file=input.files[0];if(!file)return;
     if(file.size>20*1024*1024){notice('文件超过 20 MB，请拆分参考表后导入。',true);input.value='';return;}
     action(async()=>{notice('正在校验并导入文件…');try{return await request('upload?role='+input.dataset.role+'&name='+encodeURIComponent(file.name),{},file);}finally{input.value='';}});

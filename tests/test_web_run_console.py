@@ -14,8 +14,9 @@ import pytest
 import yaml
 from openpyxl import Workbook
 
-from web_run_controller import RunController, validate_workbook, DesktopWorkerAdapter
+from web_run_controller import BUILD, RunController, validate_workbook, DesktopWorkerAdapter
 from workbench_server import WorkbenchServer
+from utils.workorder_portal import WORKORDER_PORTAL_URL
 
 
 def workbook_bytes(role="stage2"):
@@ -157,6 +158,16 @@ def test_blank_password_keeps_existing_and_session_has_no_secrets(controller):
     assert original not in saved
 
 
+def test_workorder_login_url_is_fixed_even_with_stale_settings(controller):
+    controller.config["workorder"]["url"] = "https://obsolete.example.invalid/login"
+    assert controller.snapshot()["credentials"]["workorder_url"] == WORKORDER_PORTAL_URL
+    controller.save_settings({"workorder_url": "https://obsolete.example.invalid/login",
+                              "workorder_username": "tester"})
+    assert controller.config["workorder"]["url"] == WORKORDER_PORTAL_URL
+    assert yaml.safe_load(controller.config_path.read_text(encoding="utf-8"))["workorder"]["url"] == WORKORDER_PORTAL_URL
+    assert controller._runtime_config()["workorder"]["url"] == WORKORDER_PORTAL_URL
+
+
 @pytest.mark.parametrize("role", ["agent", "internal", "project", "stage2"])
 def test_upload_each_role_preserves_original_and_survives_restart(controller, role):
     originals = {p: p.read_bytes() for p in (controller.root / "data").glob("*")}
@@ -184,6 +195,7 @@ def test_stage2_always_forces_live_query_regardless_of_old_setting(controller, s
     args = controller.worker.kwargs
     assert args["date_from"] is None and args["date_to"] is None
     assert args["config"]["workorder"]["force_live_query"]
+    assert args["config"]["workorder"]["url"] == WORKORDER_PORTAL_URL
     assert args["stage2_input_path"] == str(controller.imports["stage2"])
 
 
@@ -220,7 +232,9 @@ def test_http_origin_token_html_and_download(http_server):
         assert response.url.endswith("/?view=run")
         assert b'id="run-console-page"' in response.read()
     with urlopen(url + "/run/embed") as response:
-        assert b"2026.10.08-r4" in response.read()
+        html = response.read()
+        assert BUILD.encode("ascii") in html
+        assert b'id="workorder-url"' not in html
     with urlopen(url + "/api/run/state") as response:
         state = json.load(response)
     assert state["csrf"] == controller.csrf
