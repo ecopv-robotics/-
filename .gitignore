@@ -9,6 +9,9 @@ storage/
 data/
 output/
 output_test/
+# 注意：output/ 与 outputs/ 是两个不同目录，前者是运行产物、后者是交付/反馈产物，
+# 二者都属本地数据，绝不上库（只写 output/ 会漏掉 outputs/）。
+outputs/
 logs/
 runtime/
 tools/tesseract/
@@ -45,3 +48,42 @@ venv/
 task_plan.md
 progress.md
 findings.md
+
+# ---------------------------------------------------------------------------
+# 本地调试 / 诊断 / 备份脚本（下划线前缀）
+#
+# 为什么整类排除：
+# ① 凭据风险——_backup_config_*.yaml 是 config.yaml 的完整副本，含明文生产
+#    凭据（邮箱密码、工单平台账号密码、CRM client_id）；原有 "config.yaml"
+#    规则只匹配该确切文件名，匹配不到带前缀的备份文件。
+# ② 这些下划线脚本是本机一次性的诊断/验证产物，不属于产品代码，
+#    不应出现在公开仓库里。
+#
+# 注意扩展名必须逐个列出（gitignore 不支持正则）：
+# 曾漏掉 _*.yaml，导致 _backup_config_*.yaml 一度又能被提交，
+# 是推送前扫描闸门把它拦下来的。新增调试脚本格式时记得同步这里。
+# 末尾用 !__*.py 还原双下划线包文件（__init__.py），否则会被 _*.py 误伤。
+#
+# 例外：_run_browser_tests.js 是本地与 CI 共用的浏览器回归驱动，必须入库。
+# ---------------------------------------------------------------------------
+_*.py
+_*.js
+_*.ts
+_*.md
+_*.json
+_*.yaml
+_*.yml
+_*.log
+_*.txt
+_*.csv
+_*.ini
+_*.cfg
+_*.toml
+_*.bat
+_*.cmd
+_*.sh
+_*.ps1
+_*.spec
+_*.html
+!__*.py
+!_run_browser_tests.js

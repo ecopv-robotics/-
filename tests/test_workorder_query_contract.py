@@ -321,95 +321,121 @@ def test_query_form_continues_when_date_controls_are_incomplete():
 
 
 def test_read_only_date_inputs_are_set_by_calendar_selection_not_text_fill():
-    class FakeDateInput:
-        def __init__(self, page):
-            self.value = ""
-            self.page = page
-            self.click_count = 0
+    """只读日期框必须通过日历弹层选择，绝不能直接 fill 显示值。
 
-        async def evaluate(self, expression):
-            if "tagName" in expression:
-                return "input"
-            if "readOnly" in expression:
-                return True
-            return self.value
+    2026-10-16 适配：原 ``_fill_date_input``（分两次调用、每次点一个框）已重构为
+    ``_fill_order_date_window``（一次处理整个 Ant Design 日期范围控件）。契约不变：
+      ① 两次日历选择分别拿到格式化后的起止日期；
+      ② 任何只读输入框都不会被 ``fill`` 直接写入；
+      ③ 读回值与所选一致才返回 True。
+    """
 
-        async def click(self, **_kwargs):
-            self.click_count += 1
-            self.page.popup_open = True
+    class FakeLocator:
+        """最小 Playwright Locator 替身（只覆盖被测方法用到的接口）。"""
 
-        async def fill(self, value, **_kwargs):
-            raise AssertionError("只读日期框不能直接 fill")
+        def __init__(self, *, count_value=0, items=None, child_map=None,
+                     value="", placeholder="", on_click=None):
+            self._count = count_value
+            self._items = list(items or [])
+            self._child_map = dict(child_map or {})
+            self._value = value
+            self._placeholder = placeholder
+            self._on_click = on_click
+            self.clicks = 0
 
-        async def press(self, _key):
-            return None
-
-    class FakePopup:
-        def __init__(self, page):
-            self.page = page
+        @property
+        def first(self):
+            return self._items[0] if self._items else self
 
         async def count(self):
-            return int(self.page.popup_open)
+            return self._count
 
-    class FakePage:
-        def __init__(self):
-            self.popup_open = False
-            self.targets = {}
+        def nth(self, index):
+            return self._items[index]
 
-        async def wait_for_selector(self, selector, **_kwargs):
-            return self.targets[selector]
+        def locator(self, selector):
+            # 未登记的查询一律返回"不存在"的占位控件
+            return self._child_map.get(selector, FakeLocator())
 
-        def locator(self, _selector):
-            return FakePopup(self)
+        async def wait_for(self, **_kwargs):
+            return None
 
-        class _Keyboard:
-            async def press(self, _key):
-                return None
+        async def click(self, **_kwargs):
+            self.clicks += 1
+            if self._on_click:
+                self._on_click()
 
-        keyboard = _Keyboard()
+        async def fill(self, _value, **_kwargs):
+            raise AssertionError("只读日期框不能直接 fill")
 
-    async def run_case(update_value):
+        async def input_value(self):
+            return self._value() if callable(self._value) else self._value
+
+        async def get_attribute(self, name):
+            return self._placeholder if name == "placeholder" else ""
+
+    async def run_case(read_back_matches):
         checker = make_checker()
-        page = FakePage()
-        start = FakeDateInput(page)
-        end = FakeDateInput(page)
-        page.targets = {"date-start": start, "date-end": end}
-        checker._page = page
+        checker._log = lambda *_args, **_kwargs: None
+        selected = []
+        start_value = {"v": ""}
+        end_value = {"v": ""}
+
+        async def select_day(date_text):
+            selected.append(date_text)
+            if read_back_matches:
+                if len(selected) == 1:
+                    start_value["v"] = date_text
+                else:
+                    end_value["v"] = date_text
+            return True
+
+        checker._select_calendar_day = select_day
+
+        # 两个只读输入框：值由日历选择回填，fill 会直接抛断言
+        start_input = FakeLocator(count_value=1, value=lambda: start_value["v"],
+                                  placeholder="开始日期")
+        end_input = FakeLocator(count_value=1, value=lambda: end_value["v"],
+                                placeholder="结束日期")
+        inputs = FakeLocator(count_value=2, items=[start_input, end_input])
+        range_picker = FakeLocator(count_value=1, child_map={
+            ".ant-picker-input input": inputs,
+            # 页面未自动切到右端输入框 → 触发显式点击结束框的分支
+            ".ant-picker-input-active input": FakeLocator(count_value=0),
+        })
+        candidate = FakeLocator(count_value=1, child_map={
+            "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), "
+            "' ant-picker-range ')][1]": range_picker,
+        })
+        popup = FakeLocator(count_value=1)
+        checker._page = SimpleNamespace(
+            locator=lambda selector: (
+                popup if "ant-picker-dropdown" in selector
+                else FakeLocator(count_value=1, items=[candidate])
+            ),
+            keyboard=SimpleNamespace(press=lambda _key: None),
+        )
         checker.selectors = {
             "order_date_from_input": ["date-start"],
             "order_date_to_input": ["date-end"],
         }
-        checker._log = lambda *_args, **_kwargs: None
-        selected = []
 
-        async def select_day(date_text):
-            selected.append(date_text)
-            if update_value:
-                if len(selected) == 1:
-                    start.value = date_text
-                else:
-                    end.value = date_text
-                    page.popup_open = False
-            return True
+        ok = await checker._fill_order_date_window(("2026-07-26", "2026-09-26"))
+        return ok, selected, start_input, end_input, checker
 
-        checker._select_calendar_day = select_day
-        start_ok = await checker._fill_date_input(
-            "下单开始日期", "2026-07-26", "order_date_from_input"
-        )
-        end_ok = await checker._fill_date_input(
-            "下单结束日期", "2026-09-26", "order_date_to_input"
-        )
-        return start_ok, end_ok, selected, start, end
-
-    start_ok, end_ok, selected, start, end = asyncio.run(run_case(True))
-    assert (start_ok, end_ok) == (True, True)
+    # 读回值与所选一致 → 成功，且记录下已确认的日期窗口
+    ok, selected, start_input, end_input, checker = asyncio.run(run_case(True))
+    assert ok is True
     assert selected == ["2026-07-26", "2026-09-26"]
-    assert (start.value, end.value) == ("2026-07-26", "2026-09-26")
-    assert start.click_count == 1
-    assert end.click_count == 0
+    assert (start_input.clicks, end_input.clicks) == (1, 1)
+    assert checker._expected_query_date_window == ("2026-07-26", "2026-09-26")
+    assert "日期范围已选入并读回" in checker._last_date_filter_status
 
-    start_ok, end_ok, *_ = asyncio.run(run_case(False))
-    assert (start_ok, end_ok) == (False, False)
+    # 读回为空（页面没真正写入）→ 不得误报成功
+    ok, selected, _start, _end, checker = asyncio.run(run_case(False))
+    assert ok is False
+    assert selected == ["2026-07-26", "2026-09-26"]
+    assert checker._expected_query_date_window is None
 
 
 def test_category_tab_reenters_dates_queries_then_restores_dates_on_list_tab():

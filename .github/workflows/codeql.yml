@@ -1,0 +1,57 @@
+# CodeQL 代码安全扫描。
+#
+# 为什么必须用显式 workflow 而不是仓库的 "default setup"：
+# default setup 在仓库首次启用时依赖语言自动探测，对本仓库（主体是 Python，
+# 但 HTML 里内联了 JS）容易探测不到语言而静默不扫描。显式 workflow 里把
+# 语言写死，行为可预期。
+#
+# 扫描结果出现在仓库的 Security -> Code scanning 页面。
+# 注意：CodeQL 只报告告警，自身不会阻断 CI；「通过审查」= 无新增告警。
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 每周一 03:00 UTC 全量复查，捕捉依赖更新带来的新问题
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: 代码安全分析
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # 主体是 Python；workbench.html 里有内联 JS，
+        # 归到 javascript-typescript 语言下一起扫。
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 初始化 CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: 自动构建
+        uses: github/codeql-action/autobuild@v3
+
+      - name: 执行分析并上传结果
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

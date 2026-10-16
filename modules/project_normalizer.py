@@ -8,7 +8,7 @@ from utils.fuzzy_match import normalize_text, fuzzy_search
 # 国家列表(从附件四提取)
 COUNTRIES = [
     "德国", "荷兰", "爱尔兰", "意大利", "比利时", "波兰", "丹麦",
-    "法国", "捷克", "葡萄牙", "瑞典", "西班牙", "卢森堡", "奥地利",
+    "法国", "捷克", "斯洛伐克", "葡萄牙", "瑞典", "西班牙", "卢森堡", "奥地利",
     "匈牙利", "芬兰", "罗马尼亚", "挪威", "爱沙尼亚", "瑞士",
     "希腊", "英国", "加拿大", "拉脱维亚",
 ]
@@ -22,7 +22,7 @@ COUNTRY_ALIASES_EN = {
     "germany": "德国", "netherlands": "荷兰", "holland": "荷兰",
     "ireland": "爱尔兰", "italy": "意大利", "belgium": "比利时",
     "poland": "波兰", "denmark": "丹麦", "france": "法国",
-    "czech": "捷克", "portugal": "葡萄牙", "sweden": "瑞典",
+    "czech": "捷克", "slovakia": "斯洛伐克", "portugal": "葡萄牙", "sweden": "瑞典",
     "spain": "西班牙", "luxembourg": "卢森堡", "austria": "奥地利",
     "hungary": "匈牙利", "finland": "芬兰", "romania": "罗马尼亚",
     "norway": "挪威", "estonia": "爱沙尼亚", "switzerland": "瑞士",

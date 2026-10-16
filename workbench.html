@@ -30,6 +30,29 @@
     .german-detail-body .weee-item-actions>.pill{margin-left:auto;font-size:10px}
     .german-detail-body .compact-empty{padding:12px 0;text-align:left;font-size:12px}
 </style>
+<style>
+    /* 结构化筛选栏与读取完整性对账条：紧凑单行，避免挤压工作区高度。 */
+    .filter-bar{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 12px;margin:0 0 8px;flex:0 0 auto}
+    .filter-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:8px;align-items:end}
+    .filter-field label{display:block;font-size:10px;color:var(--muted);margin-bottom:3px;line-height:1.2}
+    .filter-field select,.filter-field input{width:100%;border:1px solid var(--line);border-radius:5px;padding:6px 8px;font:inherit;font-size:12px;outline:none;background:#fff;color:var(--ink)}
+    .filter-field select:focus,.filter-field input:focus{border-color:#72a9a3}
+    .filter-field .btn{width:100%}
+    .filter-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:7px;flex-wrap:wrap}
+    .filter-summary{font-size:11px;color:var(--muted)}
+    .filter-summary b{color:var(--ink)}
+    .filter-tags{display:flex;gap:5px;flex-wrap:wrap}
+    .filter-tag{border-radius:99px;padding:2px 8px;font-size:10px;background:#eef4f6;color:#4b6d78}
+    .reconcile{background:#f7fbfa;border:1px solid #cfe2e8;border-radius:9px;padding:8px 12px;margin:0 0 8px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;flex:0 0 auto}
+    .reconcile.warn{background:#fffafa;border-color:#efcccc}
+    .reconcile-title{font-size:10px;color:var(--muted);letter-spacing:.04em}
+    .reconcile-chain{font-size:12px;color:var(--ink);line-height:1.5}
+    .reconcile-chain b{font-weight:700}
+    .reconcile-gap{font-size:11px;color:var(--muted)}
+    .reconcile-gap.bad{color:var(--red);font-weight:700}
+    @media(max-width:1200px){.filter-grid{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:780px){.filter-grid{grid-template-columns:1fr 1fr}.reconcile{flex-direction:column;align-items:flex-start;gap:5px}}
+</style>
   <style>
     .field select{width:100%;border:1px solid var(--line);border-radius:6px;padding:9px;font:inherit;outline:none;background:#fff;color:var(--ink)}
     /* 工作台桌面布局：整页锁定在一个视口内，各内容区独立滚动。 */
@@ -329,6 +352,59 @@
     .german-detail-body .weee-item-form{grid-template-columns:minmax(0,1fr)}
     @media(max-width:780px){.weee-item-form{grid-template-columns:1fr}}
   </style>
+  <style id="layout-viewport-floor">
+    /* 最终布局覆盖（2026-10-16）：必须放在所有旧样式之后。
+       目的——把主工作区在垂直方向给足（下限 --work-min-h），窗口装不下时整页上下滚动，
+       而不是把三栏压扁；导航与顶栏在整页滚动时钉住，保证刷新/导出/日期随时可用。
+       三栏各自内部滚动的手感必须保留，所以 .work 仍然 overflow:hidden。
+       调高度只改 --work-min-h 这一个值即可：
+         93vh    = 主工作区比「铺满视口」再高约 1/3（默认，参考 1080p：750px → 1004px）
+         620px   = 只在矮窗口兜底，高分辨率下与改动前完全一致（回退用）
+         100vh   = 极端放大 */
+    :root{--work-min-h:max(620px,93vh)}
+    /* overflow 只能加在 html 上：一旦 body 也有非 visible 的 overflow，body 自己会变成滚动容器，
+       里面的 position:sticky 就会锚在 body 上（而 body 并不滚动），导航和顶栏会失效。 */
+    html{height:auto;min-height:100%;overflow-x:hidden;overflow-y:auto}
+    body{height:auto;min-height:100%;overflow:visible}
+    .shell{height:auto!important;min-height:100vh;overflow:visible!important}
+    /* .main 必须用 min-height 而不是固定 height：一旦写死 100vh，.shell 的网格行高就被钉在视口高，
+       而 .container 的内容会溢出到行外（不进网格行高），于是 .side 的可移动余量恒为 0，
+       position:sticky 无处可动 —— 实测导航在整页滚动时被原样带走。
+       改成 min-height 后，行高 = 内容真实高度（矮窗口下由 .work 的 min-height 顶起），
+       余量 = 行高 - 100vh = 需要滚动的距离，导航才钉得住。 */
+    .main{height:auto!important;min-height:100vh;overflow:visible!important}
+    /* overflow 必须放开，否则 flex 撑出来的空间无法交给页面滚动。 */
+    .container{height:auto!important;overflow:visible!important}
+    /* height:0 + flex:1 是「吃满剩余空间」的经典写法，必须保留；
+       min-height 只负责矮窗口下不被压扁。overflow:hidden 保证三栏各自内部滚动的手感。 */
+    .work{height:0!important;flex:1 1 0;min-height:var(--work-min-h)!important;overflow:hidden!important}
+    /* sticky 要求祖先链上没有 overflow:hidden，上面的覆盖已经保证这一点。
+       align-self:start 让导航不随行高拉伸，sticky 才有可移动的余量。 */
+    .side{position:sticky!important;top:0!important;height:100vh;align-self:start;z-index:6}
+    /* 顶栏钉住：否则整页滚动时刷新/导出/日期控件会被滚出视野。 */
+    .top{position:sticky;top:0;z-index:5;box-shadow:0 1px 0 0 var(--line)}
+    @media(max-width:1100px){
+      /* 这个断点本来就是「纵向长页」：队列+详情占第 1 行、证据面板占第 2 行，
+         三块各自是显式高度（610 / 610 / 620），由整页滚动承载。
+         这里必须把 height / min-height / overflow / flex 原样交还给长页模式：
+         · 少了 height:auto + overflow:visible → 第 2 行的证据面板被 overflow:hidden 整块裁掉；
+         · 少了 flex:none → .container 是 flex column 容器，.work 的 flex:1 1 0 会按
+           「可分配剩余」而不是内容高算，实测工作区从 1242px 塌成 522px（内容全部溢出）。
+         实测 1100/1024/900/781/780/680/390 都会中招，故四项必须一起还原。 */
+      .work{height:auto!important;min-height:0!important;overflow:visible!important;flex:none!important}
+    }
+    @media(max-width:780px){
+      /* 窄屏导航改为普通文档流，钉住反而挡住内容。 */
+      .side{position:static!important;height:auto}
+      .top{position:static}
+    }
+  </style>
+  <style id="state-keep-style">
+    /* 修正明细弹窗的「未保存修改」角标：明确区分草稿与已入库值，避免误认为已经保存。 */
+    #modal-draft-note{display:inline-flex;align-items:center;gap:5px;margin-left:9px;padding:2px 8px;border-radius:99px;background:var(--warn);color:var(--amber);font-size:11px;font-weight:400;white-space:nowrap;vertical-align:2px}
+    #modal-draft-note[hidden]{display:none}
+    #modal-draft-note button{border:0;background:none;color:var(--red);font:inherit;font-size:11px;cursor:pointer;padding:0 2px;text-decoration:underline}
+  </style>
 </head>
 <body>
 <div class="shell">
@@ -337,7 +413,6 @@
     <nav class="nav">
       <button type="button" id="run-console-link" title="运行控制台" aria-label="运行控制台" aria-pressed="false" hidden><i>≡</i><span class="nav-label">运行控制台</span></button>
       <button class="active" data-view="inbox" title="询单复核" aria-label="询单复核"><i>▦</i><span class="nav-label">询单复核</span></button>
-      <button data-view="weee" title="德国WEEE/电池法" aria-label="德国WEEE/电池法"><i>◈</i><span class="nav-label">德国WEEE/电池法</span></button>
       <button data-view="missing" title="漏单邮件" aria-label="漏单邮件"><i>⚠</i><span class="nav-label">漏单邮件</span></button>
       <button data-view="filtered" title="已过滤邮件" aria-label="已过滤邮件"><i>▥</i><span class="nav-label">已过滤邮件</span></button>
     </nav>
@@ -347,13 +422,25 @@
   <main class="main">
     <header class="top">
       <div><div class="crumb">邮件审核工作台 · UI 03.4</div><h1>人工复核</h1></div>
-      <div class="top-actions"><span class="pill ready">本机数据 · 不对外联网</span><span class="pill confirmed" id="history-state">历史留痕读取中</span><div class="global-date-range" title="三个工作视图统一按邮件日期筛选"><label>邮件日期</label><input type="date" id="date-start" aria-label="开始日期"/><span>至</span><input type="date" id="date-end" aria-label="截至日期"/><button class="btn small" id="clear-date-range">全部</button></div><button class="btn" id="refresh">刷新数据</button><button class="btn" id="bulk-filter" disabled>转为已过滤（0）</button><button class="btn primary" id="bulk-confirm" disabled>批量确认（0）</button><button class="btn primary" id="export">导出复核结果</button></div>
+      <div class="top-actions"><span class="pill ready">本机数据 · 不对外联网</span><span class="pill confirmed" id="history-state">历史留痕读取中</span><div class="global-date-range" title="三个工作视图统一按邮件日期筛选"><label>邮件日期</label><input type="date" id="date-start" aria-label="开始日期"/><span>至</span><input type="date" id="date-end" aria-label="截至日期"/><button class="btn small" id="clear-date-range" title="清空邮件日期范围，恢复全量">全部</button></div><button class="btn" id="refresh">刷新数据</button><button class="btn" id="bulk-filter" disabled>转为已过滤（0）</button><button class="btn primary" id="bulk-confirm" disabled>批量确认（0）</button><button class="btn primary" id="export">导出复核结果</button></div>
     </header>
     <div class="container">
       <div class="banner"><span id="view-banner"><b>工作方式：</b>系统先读取阶段一输出并展示证据，人工确认后才进入后续工单比对。</span><span class="muted" id="source-path"></span></div>
       <section class="stats" id="stats"></section>
+      <section class="filter-bar" aria-label="结构化筛选">
+        <div class="filter-grid">
+          <div class="filter-field"><label for="f-country-sel">国家</label><select id="f-country-sel"><option value="">全部国家</option></select></div>
+          <div class="filter-field"><label for="f-program-sel">服务项目</label><select id="f-program-sel"><option value="">全部项目</option></select></div>
+          <div class="filter-field"><label for="f-status-sel">状态</label><select id="f-status-sel"><option value="">全部状态</option><option value="review">待人工复核</option><option value="ready">待确认</option><option value="confirmed">已确认</option></select></div>
+          <div class="filter-field"><label for="f-agent-q">所属代理</label><input id="f-agent-q" type="text" placeholder="代理关键字…" autocomplete="off"/></div>
+          <div class="filter-field"><label for="f-customer-q">客户</label><input id="f-customer-q" type="text" placeholder="公司名 / 客户编号…" autocomplete="off"/></div>
+          <div class="filter-field"><label>&nbsp;</label><button class="btn small" id="filter-reset">重置筛选</button></div>
+        </div>
+        <div class="filter-foot"><span class="filter-summary" id="filter-summary"></span><span class="filter-tags" id="filter-tags"></span></div>
+      </section>
+      <section class="reconcile" id="reconcile" aria-label="读取完整性对账"></section>
         <section class="work">
-        <aside class="card queue"><div class="card-head"><h2 id="queue-title">询单队列</h2><span class="muted" id="queue-count"></span></div><div class="queue-tools"><input class="search" id="search" placeholder="搜索邮件编号、主题、公司、代理、项目、发件人…"/><div class="filters" id="filters"><button class="on" data-filter="all">全部</button><button data-filter="review">待复核</button><button data-filter="ready">待确认</button><button data-filter="confirmed">已完成</button></div><div class="queue-selectbar" id="queue-selectbar"><button class="btn small" id="select-visible">全选当前列表</button><button class="btn small" id="clear-selected">清除选择</button><span class="selected-count" id="selected-count">已选0封</span></div></div><div class="queue-list" id="queue-list"></div></aside>
+        <aside class="card queue"><div class="card-head"><h2 id="queue-title">询单队列</h2><span class="muted" id="queue-count"></span></div><div class="queue-tools"><input class="search" id="search" placeholder="搜索邮件编号、主题、公司、代理、项目、发件人…"/><div class="queue-selectbar" id="queue-selectbar"><button class="btn small" id="select-visible">全选当前列表</button><button class="btn small" id="clear-selected">清除选择</button><span class="selected-count" id="selected-count">已选0封</span></div></div><div class="queue-list" id="queue-list"></div></aside>
         <div class="splitter" data-splitter="queue" role="separator" aria-label="调整询单队列宽度" tabindex="0"></div>
         <section class="card detail" id="detail"></section>
         <div class="splitter" data-splitter="evidence" role="separator" aria-label="调整字段证据宽度" tabindex="0"></div>
@@ -372,10 +459,10 @@
 <datalist id="project-options"></datalist>
 <script>
   const API_BASE=location.protocol==='file:'?'http://127.0.0.1:8765':'';
-  const app={data:null,view:'inbox',filter:'all',search:'',dateStart:'',dateEnd:'',mailId:null,detailId:null,tab:'details',highlightField:null,detailOrder:{},selectedMailIds:new Set(),stateFromCache:false,serverOffline:false,backgroundRefreshTimer:null,pendingActionButton:null};
+  const app={data:null,view:'inbox',filter:'all',search:'',fCountry:'',fProgram:'',fStatus:'',fAgent:'',fCustomer:'',dateStart:'',dateEnd:'',mailId:null,detailId:null,tab:'details',highlightField:null,detailOrder:{},selectedMailIds:new Set(),stateFromCache:false,serverOffline:false,backgroundRefreshTimer:null,pendingActionButton:null};
 
   const $=s=>document.querySelector(s); const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const statusLabel=s=>({review:'待人工复核',ready:'待确认',partial:'部分确认',confirmed:'已完成',returned:'已退回',needs_info:'待补资料'}[s]||s||'未判定');
+  const statusLabel=s=>({review:'待人工复核',ready:'待确认',partial:'部分确认',confirmed:'已确认',returned:'已退回',needs_info:'待补资料'}[s]||s||'未判定');
   const statusClass=s=>s||'review';
   function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)}
   const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -532,14 +619,13 @@
     if(app.view==='filtered'){
       const mails=filteredMails().filter(matchMail),projectCount=mails.filter(m=>m.scope==='业务项目').length,emailCount=mails.length-projectCount;
       $('#queue-title').textContent='已过滤邮件';$('#queue-count').textContent=`${emailCount} 封${projectCount?` · ${projectCount} 个业务项目`:''}`;
-      $('#filters').style.display='none';
       $('#queue-list').innerHTML=mails.length?mails.map(m=>`<div class="mail-item filtered-item ${app.mailId===m.id?'active':''}" data-mail="${esc(m.id)}"><div class="mail-line"><input class="mail-select" type="checkbox" data-select-mail="${esc(m.id)}" ${app.selectedMailIds.has(m.id)?'checked':''} aria-label="选择邮件"/><div class="mail-subject">${esc(m.subject||'无主题')} <span class="mail-number">邮件编号 ${esc(m.mail_number||m.id)}</span></div></div><div class="mail-meta"><span>${esc(m.sender||'未知发件人')}</span><span>${esc(m.date||'')}</span></div><div class="filter-reason">${m.scope==='业务项目'?'过滤项目':'过滤原因'}：${esc(m.project||m.reason||'未记录')}</div><div style="margin-top:7px;display:flex;justify-content:space-between;align-items:center"><span class="muted">${m.scope==='业务项目'?'仅此项目过滤':m.settled?'已定论过滤':'待人工确认'}</span><span class="pill review">${m.scope==='业务项目'?'项目已过滤':'已过滤'}</span></div></div>`).join(''):'<div class="empty">没有符合条件的已过滤邮件</div>';
       document.querySelectorAll('[data-mail]').forEach(n=>n.onclick=()=>{app.mailId=n.dataset.mail;app.detailId=null;app.tab='raw';render()});
       bindQueueSelection();
       return;
     }
     const mails=(app.data.mails||[]).filter(m=>app.filter==='all'||m.status===app.filter).filter(matchMail);
-    $('#queue-title').textContent='询单队列';$('#queue-count').textContent=mails.length+' 封';$('#filters').style.display='flex';
+    $('#queue-title').textContent='询单队列';$('#queue-count').textContent=mails.length+' 封';
     $('#queue-list').innerHTML=mails.length?mails.map(m=>`<div class="mail-item ${app.mailId===m.id?'active':''}" data-mail="${esc(m.id)}"><div class="mail-line"><input class="mail-select" type="checkbox" data-select-mail="${esc(m.id)}" ${app.selectedMailIds.has(m.id)?'checked':''} aria-label="选择邮件"/><div class="mail-subject">${esc(m.subject||'无主题')}</div></div><div class="mail-meta"><span>${esc(m.sender||'未知发件人')}</span><span>${esc(m.date||'')}</span></div><div style="margin-top:7px;display:flex;justify-content:space-between;align-items:center"><span class="muted">${m.details.length} 条明细</span><span class="pill ${statusClass(m.status)}">${statusLabel(m.status)}</span></div></div>`).join(''):'<div class="empty">没有符合条件的询单</div>';
     document.querySelectorAll('[data-mail]').forEach(n=>n.onclick=()=>{app.mailId=n.dataset.mail;const m=app.data.mails.find(x=>x.id===app.mailId);app.detailId=m?.details[0]?.id||null;app.tab='details';render()});bindQueueSelection()
   }
@@ -548,6 +634,16 @@
     if(detail?.battery?.enabled)return Boolean(detail.battery.confirmed);
     return detail?.status==='confirmed';
   }
+  // 「字段提取完成」闸门：代理 / 公司 / 国家 / 项目 四项缺一不可。
+  // 客户编号（customer_code）当前 38/41 为空属正常情况，不作为必填，否则绝大多数业务都点不了确认。
+  const REQUIRED_DETAIL_FIELDS=[['agent','代理'],['company','公司'],['country','国家'],['program','项目']];
+  function detailMissingFields(detail){
+    const fields=(detail&&detail.fields)||{};
+    return REQUIRED_DETAIL_FIELDS
+      .filter(pair=>!String(fields[pair[0]]==null?'':fields[pair[0]]).trim())
+      .map(pair=>pair[1]);
+  }
+  function detailFieldsComplete(detail){return detailMissingFields(detail).length===0}
   function detailMatchesQueueFilter(detail,filter){
     if(filter==='confirmed')return detailStage2Ready(detail);
     if(filter==='review')return !detailStage2Ready(detail)&&detail?.status==='review';
@@ -755,8 +851,8 @@
     const h=app.data?.history||{},node=$('#history-state');if(!node)return;
     if(app.stateFromCache){node.classList.remove('ready','confirmed','review');node.classList.add('ready');node.textContent='本机缓存 · 待刷新';return}
     node.classList.remove('ready','confirmed','review');
-    if(h.refreshing){node.classList.add('ready');node.textContent=`确认已保存 · 历史汇总后台更新中 · 已完成${h.completed_count||0} / 未完成${h.unfinished_count||0}`}
-    else if(h.enabled){node.classList.add('confirmed');node.textContent=`历史留痕已启用 · 已完成${h.completed_count||0} / 未完成${h.unfinished_count||0}`}
+    if(h.refreshing){node.classList.add('ready');node.textContent=`确认已保存 · 历史汇总后台更新中 · 已确认${h.completed_count||0} / 未确认${h.unfinished_count||0}`}
+    else if(h.enabled){node.classList.add('confirmed');node.textContent=`历史留痕已启用 · 已确认${h.completed_count||0} / 未确认${h.unfinished_count||0}`}
     else{node.classList.add('ready');node.textContent='测试会话 · 不写正式历史'}
   }
   let healthTimer=null;
@@ -780,14 +876,13 @@
   renderStats=function(){
     const active=(app.data?.mails||[]).filter(dateMatches),details=active.flatMap(m=>m.details||[]),filtered=(app.data?.filtered_mails||[]).filter(dateMatches),emailFiltered=filtered.filter(m=>m.scope!=='业务项目');
     const c={imap:app.data?.counts?.imap_read_total||0,mails:active.length,total:active.length+emailFiltered.length,details:details.length,review:details.filter(d=>d.status==='review').length,confirmed:details.filter(detailStage2Ready).length,filtered:emailFiltered.length};
-    $('#stats').innerHTML=[['imap','IMAP读取邮件',''],['total','邮件总数',''],['mails','询单邮件',''],['details','业务明细',''],['review','待人工复核','amber'],['confirmed','已完成明细','green'],['filtered','已过滤邮件','red']].map(x=>`<div class="stat ${x[2]}"><div class="num">${x[0]==='imap'?(c.imap||'—'):(c[x[0]]??0)}</div><div class="label">${x[1]}</div></div>`).join('');
+    $('#stats').innerHTML=[['imap','IMAP读取邮件',''],['total','邮件总数',''],['mails','询单邮件',''],['details','业务明细',''],['review','待人工复核','amber'],['confirmed','已确认明细','green'],['filtered','已过滤邮件','red']].map(x=>`<div class="stat ${x[2]}"><div class="num">${x[0]==='imap'?(c.imap||'—'):(c[x[0]]??0)}</div><div class="label">${x[1]}</div></div>`).join('');
     setHistoryState();
   };
   renderQueue=function(){
     const mails=queueMails(),isFiltered=app.view==='filtered',isUnfinished=app.view==='unfinished',isMissing=app.view==='missing';
     $('#queue-title').textContent=isFiltered?'已过滤邮件':(isMissing?'漏单邮件':'询单队列');
     $('#queue-count').textContent=queueCountLabel(mails);
-    $('#filters').style.display=(isFiltered||isUnfinished||isMissing)?'none':'flex';
     if(isFiltered){
       $('#queue-list').innerHTML=mails.length?mails.map(m=>`<div class="mail-item filtered-item ${app.mailId===m.id?'active':''}" data-mail="${esc(m.id)}"><div class="mail-line"><input class="mail-select" type="checkbox" data-select-mail="${esc(m.id)}" ${app.selectedMailIds.has(m.id)?'checked':''} aria-label="选择邮件"/><div class="mail-subject">${esc(m.subject||'无主题')}</div></div><div class="mail-meta"><span>${esc(m.sender||'未知发件人')}</span><span>${esc(m.date||'')}</span></div><div class="filter-reason">过滤原因：${esc(m.reason||'未记录')}</div><div style="margin-top:7px;display:flex;justify-content:space-between;align-items:center"><span class="muted">${m.settled?'已定论过滤':'待人工确认'}</span><span class="pill review">已过滤</span></div></div>`).join(''):'<div class="empty">没有符合条件的已过滤邮件</div>';
       document.querySelectorAll('#queue-list [data-mail]').forEach(n=>n.onclick=()=>{app.mailId=n.dataset.mail;app.detailId=null;app.tab='raw';render()});decorateQueueCards();bindQueueSelection();return;
@@ -871,6 +966,8 @@
   }
   $('#date-start').onchange=e=>setReviewDate('date-start',e.target.value);
   $('#date-end').onchange=e=>setReviewDate('date-end',e.target.value);
+  // 日期栏「全部」：清空邮件日期范围并复位选择。这是日期维度唯一的清空入口，
+  // 与状态筛选不重复，不得删除。
   $('#clear-date-range').onclick=()=>{app.dateStart='';app.dateEnd='';saveDateRange();syncDateInputs();app.selectedMailIds.clear();app.mailId=null;app.detailId=null;render()};
   document.querySelectorAll('[data-filter]').forEach(n=>n.onclick=()=>{app.filter=n.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('on',x===n));render()});
   document.querySelectorAll('[data-view]').forEach(n=>n.onclick=()=>{app.view=n.dataset.view;app.filter='all';app.search='';app.mailId=null;app.detailId=null;app.highlightField=null;app.tab='details';app.selectedMailIds.clear();$('#search').value='';document.querySelectorAll('[data-view]').forEach(x=>x.classList.toggle('active',x===n));document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('on',x.dataset.filter==='all'));render()});
@@ -1327,7 +1424,7 @@
       .map(mail=>({...mail,status:pendingMailStatus(mail)})).filter(mail=>mail.status);
   }
   function allInboxMails(){
-    return (app.data?.mails||[]).filter(mail=>dateMatches(mail)&&!isGermanSpecialMail(mail));
+    return (app.data?.mails||[]).filter(mail=>dateMatches(mail));  // 合并视图：德国专项不再从询单队列排除
   }
   function firstWeeeDetail(mail){return (mail?.details||[]).find(isGermanSpecialDetail)||mail?.details?.[0]||null}
   function weeeMailsForView(){
@@ -1364,7 +1461,6 @@
     const mails=queueMails();
     $('#queue-title').textContent='德国WEEE/电池法';
     $('#queue-count').textContent=mails.length+' 封';
-    $('#filters').style.display='flex';
     $('#queue-list').innerHTML=mails.length?mails.map(mail=>{
       const details=mail.details||[],items=details.reduce((sum,detail)=>sum+(detail.weee?.items||[]).length,0);
       return `<div class="mail-item ${app.mailId===mail.id?'active':''}" data-mail="${esc(mail.id)}"><div class="mail-line"><input class="mail-select" type="checkbox" data-select-mail="${esc(mail.id)}" ${app.selectedMailIds.has(mail.id)?'checked':''} aria-label="选择邮件"/><div class="mail-subject">${esc(mail.subject||'无主题')} <span class="mail-number">邮件编号 ${esc(mail.mail_number||mail.id)}</span></div></div><div class="mail-meta"><span>${esc(mail.sender||'未知发件人')}</span><span>${esc(mail.date||'')}</span></div><div class="queue-extra"><span>${details.length} 条业务 · ${items} 个品牌/品类项目</span><span class="pill ${statusClass(mail.status)}">${statusLabel(mail.status)}</span></div></div>`;
@@ -1474,12 +1570,12 @@
   document.addEventListener('blur',event=>{
     if(event.target?.matches?.('[data-weee-brand],[data-weee-class]'))updateWeeeDraftFromField(event.target,0);
   },true);
-  async function confirmWeeeDetail(mail,detail){
+  async function confirmWeeeDetail(mail,detail,button){
     cancelWeeeDraftSave(detail?.id);
     const items=collectWeeeItems(detail);
     if(!items.length){toast('当前 WEEE 明细没有可确认的品牌/品类项目');return}
     const reason='人工核对邮件、附件及产品分类表后确认';
-    const navigation=captureNavigation(),finishFeedback=beginActionFeedback(takeActionButton());
+    const navigation=captureNavigation(),finishFeedback=beginActionFeedback(button||takeActionButton());
     try{
       const result=await api('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'confirm_weee',record_id:detail.id,mail_id:mail.id,mail_number:mail.mail_number,detail_number:detail.detail_number,subject:mail.subject,weee_items:items,reason:reason.trim()||'人工核对邮件、附件及产品分类表后确认'})});
       const savedItems=items.map(item=>({...item,weee_confirmed:!!(item.brand&&item.category_class)}));
@@ -1606,6 +1702,24 @@
       });
     });
   }
+  // 「确认业务」整条一次确认（电池版）：与德国 WEEE 的整体确认对称。
+  // 只有 brand + 德国分类都齐全的项才会被置为已确认，缺项时后端返回 ready，
+  // 前端据此提示仍需补齐，避免把未核对完的业务伪装成已确认。
+  async function confirmBatteryDetail(mail,detail,button){
+    cancelBatteryDraft(detail?.id);
+    const items=collectBatteryItems(detail);
+    if(!items.length){toast('当前电池明细没有可确认的品牌/品类项目');return}
+    const navigation=captureNavigation(),finish=beginActionFeedback(button||takeActionButton());
+    try{
+      const result=await queueBatteryWrite(mail,detail,'confirm_battery',items);
+      detail.battery=result.battery;
+      detail.status=(result.battery&&result.battery.confirmed)?'confirmed':'ready';
+      detail.events=[...(detail.events||[]),{at:new Date().toISOString(),action:'confirm_battery',label:result.message||'确认电池品牌/品类'}];
+      syncLocalCounts();restoreNavigationSelection(navigation);render();restoreNavigationScroll(navigation);
+      toast((result.battery&&result.battery.confirmed)?'电池品牌/品类已确认':'已保存，仍有品牌或德国分类未补齐');
+      scheduleBackgroundRefresh();
+    }catch(error){toast(error.message)}finally{finish()}
+  }
   function renderWeeeDetail(){
     const panelScroll=captureWeeePanelScroll();
     const mail=currentMail(),details=mail?.details||[];
@@ -1624,7 +1738,9 @@
     });
     const groupOf=detail=>isBatteryDetail(detail)?'battery':(detail.weee?.enabled||/^德国\s*WEEE$/i.test(detail.fields?.program||''))?'weee':'other';
     const cards=[['weee','德国WEEE'],['battery','德国电池法'],['other','其他业务']].map(([key,label])=>{const contents=details.map((detail,index)=>groupOf(detail)===key?rendered[index]:'').join('');return contents?`<section class="german-project-group" data-project-group="${key}" aria-label="${label}"><h3 class="german-project-heading">${label}</h3>${contents}</section>`:''}).join('');
-    $('#detail').innerHTML=`<div class="detail-head"><span class="pill ready">德国WEEE/电池法</span><div class="detail-title">${esc(mail.subject||'无主题')}</div><div class="detail-meta"><span>发件人：${esc(mail.sender||'未知')}</span><span>时间：${esc(mail.date||'')}</span><span>业务：${details.length} 条</span></div><div class="detail-actions"><button class="btn small danger" id="delete-weee-mail">删除整封邮件</button></div></div><div class="detail-body german-detail-body">${cards}</div>`;
+    // 顶栏「整理完成」= 整封一次确认：与普通邮件同一入口（handler 由后面的 UI 层统一绑定，
+    // 走 completeMail 的两道闸门）。缺这个按钮德国邮件就只能逐项确认，永远无法整封结单。
+    $('#detail').innerHTML=`<div class="detail-head"><span class="pill ready">德国WEEE/电池法</span><div class="detail-title">${esc(mail.subject||'无主题')}</div><div class="detail-meta"><span>发件人：${esc(mail.sender||'未知')}</span><span>时间：${esc(mail.date||'')}</span><span>业务：${details.length} 条</span></div><div class="detail-actions"><button class="btn small primary" id="confirm" title="确认整封邮件中全部业务">整理完成</button><button class="btn small danger" id="delete-weee-mail">删除整封邮件</button></div></div><div class="detail-body german-detail-body">${cards}</div>`;
     bindBatteryCards(mail,details);
     document.querySelectorAll('[data-weee-detail]').forEach(node=>node.onclick=event=>{if(event.target.closest('input,select,button')||window.getSelection()?.toString())return;app.detailId=node.dataset.weeeDetail;render()});
     document.querySelectorAll('[data-confirm-weee-item]').forEach(node=>node.onclick=event=>{event.stopPropagation();const detail=details.find(item=>item.id===node.dataset.confirmWeeeItem);if(detail)confirmWeeeItem(mail,detail,Number(node.dataset.weeeItemIndex||0))});
@@ -1645,9 +1761,9 @@
     box.innerHTML=`<h3>德国 ${battery?'电池法':'WEEE'} 证据</h3><div class="ev-card"><div class="ev-label">邮件标题</div><div class="ev-line">${esc(mail.subject||'无主题')}</div><span class="source">来源：邮件主题</span></div><div class="ev-card"><div class="ev-label">邮件正文</div><div class="raw">${esc(mail.body||'（正文为空）')}</div><span class="source">来源：邮件正文</span></div><div class="ev-card"><div class="ev-label">附件清单</div><div>${attachments}</div><span class="source">来源：邮件附件名称</span></div>${attachmentContent}<div class="section-title" style="margin-top:14px">当前明细的品牌/品类证据</div>${items||'<div class="empty">未提取到可回溯的品牌/品类证据</div>'}${battery?'':`<div class="weee-rule" style="margin-top:10px"><b>核对路径：</b>工作台 → 工单管理 → 注册工单 → 品类明细。操作人员确认后，阶段二读取该页签中的品牌/品类字段，与本页项目逐项比较。</div>`}`;
   }
   const _renderDetailBeforeWeee=renderDetail;
-  renderDetail=function(){if(app.view==='weee'){renderWeeeDetail();return}_renderDetailBeforeWeee()};
+  renderDetail=function(){if(currentMailHasGermanSpecial()){renderWeeeDetail();return}_renderDetailBeforeWeee()};
   const _renderEvidenceBeforeWeee=renderEvidence;
-  renderEvidence=function(){if(app.view==='weee'){renderWeeeEvidence();return}_renderEvidenceBeforeWeee()};
+  renderEvidence=function(){if(currentMailHasGermanSpecial()){renderWeeeEvidence();return}_renderEvidenceBeforeWeee()};
   const _renderBeforeWeee=render;
   render=function(){
     if(app.view==='weee'){
@@ -1665,8 +1781,21 @@
   // Approved UI 03: preserve existing data and renderers, scope actions to their owners.
   async function completeMail(mail,button){
     const full=(app.data?.mails||[]).find(item=>item.id===mail.id)||mail;
-    if((full.details||[]).some(detail=>detail.weee?.enabled&&!detailStage2Ready(detail))){toast('请先在德国 WEEE 中逐项确认品牌/品类');return}
-    if(!confirm('确认整理完成整封邮件的 '+(full.details?.length||0)+' 条业务？仍待复核的邮件不会被批量确认。'))return;
+    // 闸门一：整封的每一条业务都要「字段提取完成」才允许确认
+    const incomplete=(full.details||[]).filter(detail=>!detailFieldsComplete(detail));
+    if(incomplete.length){
+      const first=incomplete[0];
+      app.mailId=mail.id;app.detailId=first.id;render();
+      toast(`有 ${incomplete.length} 条业务字段未提取完整（缺：${detailMissingFields(first).join('、')}），已定位到第一条，请先点『修正明细』补全`);
+      return;
+    }
+    // 闸门二：德国 WEEE/电池法需先确认品牌/品类 —— 直接把人带到那条明细，不用自己翻
+    const weeePending=(full.details||[]).find(detail=>detail.weee?.enabled&&!detailStage2Ready(detail));
+    if(weeePending){
+      app.mailId=mail.id;app.detailId=weeePending.id;render();
+      toast('该业务需先确认品牌/品类，已为你定位到对应明细');
+      return;
+    }
     const finish=beginActionFeedback(button),navigation=captureNavigation();
     try{
       const result=await api('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'bulk_confirm',mail_ids:[mail.id],mail_numbers:{[mail.id]:mail.mail_number||''},reason:'人工确认整封邮件字段已核对'})});
@@ -1680,8 +1809,15 @@
     if(!card||!detail)return;
     const actions=document.createElement('div');actions.className='business-actions';actions.dataset.businessId=detail.id;
     const ready=detailStage2Ready(detail),weee=detail.weee?.enabled;
+    // 字段未提取完整时，确认类按钮禁用，并把缺哪几项写进 title，让人知道该补什么
+    const missingFields=detailMissingFields(detail),fieldsOk=missingFields.length===0,locked=ready||!fieldsOk;
+    const lockTitle=fieldsOk
+      ?(weee?'逐项确认品牌与德国分类':'确认当前业务字段已核对')
+      :'字段未提取完整，缺少：'+missingFields.join('、')+'（请先点『修正明细』补全）';
     actions.innerHTML='<button class="btn small" data-business-action="edit">修正明细</button>'
-      +(weee?'<button class="btn small primary" data-business-action="weee">核对品牌/品类</button>':'<button class="btn small primary" data-business-action="confirm" '+(ready?'disabled':'')+'>'+(ready?'已确认':'确认业务')+'</button>')
+      +(weee
+        ?'<button class="btn small primary" data-business-action="weee" '+(locked?'disabled':'')+' title="'+esc(lockTitle)+'">'+(fieldsOk?'核对品牌/品类':'字段待补全')+'</button>'
+        :'<button class="btn small primary" data-business-action="confirm" '+(locked?'disabled':'')+' title="'+esc(lockTitle)+'">'+(ready?'已确认':(fieldsOk?'确认业务':'字段待补全'))+'</button>')
       +'<button class="btn small secondary-action" data-business-action="return">退回复核</button><button class="btn small secondary-action danger" data-business-action="delete">删除业务</button>';
     actions.onclick=async event=>{
       const button=event.target.closest('[data-business-action]');if(!button)return;
@@ -1720,12 +1856,29 @@
     document.querySelectorAll('#detail .business[data-detail],#detail .weee-detail-card[data-weee-detail],#detail .battery-detail-card[data-battery-detail]').forEach(card=>{
       const detail=mail.details?.find(item=>item.id===(card.dataset.detail||card.dataset.weeeDetail||card.dataset.batteryDetail));
       if(!detail)return;
-      if(card.matches('.weee-detail-card')){
+      // 注意：renderBatteryCard 复用了 .weee-detail-card 类名，只判 .weee-detail-card 会把
+      // 电池卡片误当成 WEEE 卡片处理（旧的错误分支），所以必须先用 data-battery-detail 区分。
+      const isBatteryCard=card.matches('.battery-detail-card[data-battery-detail]'),isWeeeCard=card.matches('.weee-detail-card[data-weee-detail]');
+      if(isBatteryCard||isWeeeCard){
         const edit=document.createElement('button');edit.className='btn small';edit.textContent='修正明细';edit.dataset.businessAction='edit';
         edit.onclick=event=>{event.stopPropagation();app.detailId=detail.id;openModal(detail)};
+        // 「确认业务」= 整条业务一次确认（WEEE / 电池均走品牌+品类的整体确认）。
+        // 字段未提取完整时禁用，并在 title 里点名缺哪几项。
+        const missingFields=detailMissingFields(detail),fieldsOk=missingFields.length===0,done=detailStage2Ready(detail);
+        const confirmAll=document.createElement('button');
+        confirmAll.className='btn small primary';confirmAll.dataset.businessAction='confirm-business';
+        confirmAll.textContent=done?'已确认':(fieldsOk?'确认业务':'字段待补全');
+        confirmAll.disabled=done||!fieldsOk;
+        confirmAll.title=fieldsOk
+          ?(done?'该条业务已确认':(isBatteryCard?'一次确认该明细下全部品牌与德国分类':'一次确认该明细下全部品牌与德国分类'))
+          :'字段未提取完整，缺少：'+missingFields.join('、')+'（请先点『修正明细』补全）';
+        confirmAll.onclick=event=>{
+          event.stopPropagation();app.detailId=detail.id;
+          if(isBatteryCard)confirmBatteryDetail(mail,detail,confirmAll);else confirmWeeeDetail(mail,detail,confirmAll);
+        };
         const remove=document.createElement('button');remove.className='btn small danger';remove.textContent='删除该业务';remove.title='只删除当前公司与项目，不删除同封邮件的其他业务';remove.dataset.businessAction='delete-business';
         remove.onclick=event=>{event.stopPropagation();app.detailId=detail.id;deleteProjectRecord(mail,detail)};
-        card.querySelector('.weee-detail-head').append(edit,remove);
+        card.querySelector('.weee-detail-head').append(edit,confirmAll,remove);
       }else{
         bindBusinessActions(card,mail,detail);
       }
@@ -2102,6 +2255,414 @@
   fetch('/api/run/state',{cache:'no-store'}).then(response=>{
     if(response.ok){runConsoleButton.hidden=false;if(initialView==='run')showRunConsole(true)}
   }).catch(()=>{});
+  // ==== 结构化筛选：国家 / 服务项目 / 状态 / 所属代理 / 客户 ====
+  // 代理别名只参与筛选比较，不改动任何原始数据。
+  const AGENT_ALIASES={'深圳华之星检测有限公司':'华之星'};
+  function agentCanonical(value){
+    const key=String(value==null?'':value).trim();
+    if(!key)return '';
+    if(AGENT_ALIASES[key])return AGENT_ALIASES[key];
+    for(const alias in AGENT_ALIASES){if(key.indexOf(alias)>=0||(alias.indexOf(key)>=0&&key.length>=4))return AGENT_ALIASES[alias]}
+    return key;
+  }
+  function currentMailHasGermanSpecial(){
+    if(app.view==='filtered'||app.view==='missing')return false;
+    const mail=currentMail();
+    return Boolean(mail&&(mail.details||[]).some(isGermanSpecialDetail));
+  }
+  function dimActive(){return Boolean(app.fCountry||app.fProgram||app.fStatus||app.fAgent||app.fCustomer)}
+  function dimMatchDetail(detail){
+    const f=(detail&&detail.fields)||{};
+    if(app.fCountry&&String(f.country||'').trim()!==app.fCountry)return false;
+    if(app.fProgram&&String(f.program||'').trim()!==app.fProgram)return false;
+    if(app.fStatus&&String(detail.status||'')!==app.fStatus)return false;
+    if(app.fAgent&&!fuzzyContains(agentCanonical(f.agent),agentCanonical(app.fAgent)))return false;
+    if(app.fCustomer&&!fuzzyContains([f.company,f.customer_code].filter(Boolean).join(' '),app.fCustomer))return false;
+    return true;
+  }
+  function dimProjectMail(mail){
+    if(!dimActive())return mail;
+    const details=(mail.details||[]).filter(dimMatchDetail);
+    if(!details.length)return null;
+    return {...mail,details,detail_count:details.length};
+  }
+  const _queueMailsBeforeDimFilter=queueMails;
+  queueMails=function(){return (_queueMailsBeforeDimFilter()||[]).map(dimProjectMail).filter(Boolean)};
+  function projectRows(){
+    const rows=(app.data&&app.data.projects)||[];
+    return (Array.isArray(rows)?rows:[]).filter(row=>row&&typeof row==='object'&&row.name);
+  }
+  function queueDetailStats(){
+    const details=(app.data?.mails||[]).flatMap(m=>m.details||[]);
+    const programHits=new Map(),countryHits=new Map();
+    details.forEach(detail=>{
+      const fields=(detail&&detail.fields)||{};
+      const program=String(fields.program||'').trim();
+      const country=String(fields.country||'').trim();
+      if(program)programHits.set(program,(programHits.get(program)||0)+1);
+      if(country)countryHits.set(country,(countryHits.get(country)||0)+1);
+    });
+    return {programHits,countryHits};
+  }
+  function namedOption(name,count){
+    return `<option value="${esc(name)}">${esc(name)}${count?`（${count} 条）`:''}</option>`;
+  }
+  // 国家全集与项目全集都取自「项目名称表」，该表重新导入后下拉随之变化；
+  // 批次里出现、但项目表暂无的国家只在末尾兜底补上，避免漏筛。
+  let _filterOptionsSignature='';
+  function buildFilterOptions(){
+    if(!app.data)return;
+    const rows=projectRows();
+    const stats=queueDetailStats();
+    const programHits=stats.programHits,countryHits=stats.countryHits;
+    const countries=[],tableNames=[],tableNameSet=new Set();
+    rows.forEach(row=>{
+      const name=String(row.name||'').trim();
+      const country=String(row.country||'').trim();
+      if(name){tableNames.push(name);tableNameSet.add(name)}
+      if(country&&countries.indexOf(country)<0)countries.push(country);
+    });
+    [...countryHits.keys()].forEach(country=>{if(countries.indexOf(country)<0)countries.push(country)});
+    const signature=JSON.stringify([
+      countries,
+      countries.map(country=>countryHits.get(country)||0),
+      rows.map(row=>String(row.name||'')+'\u0001'+String(row.country||'')),
+      [...programHits],
+      app.fCountry,
+    ]);
+    if(signature===_filterOptionsSignature)return;
+    _filterOptionsSignature=signature;
+    const countrySel=document.getElementById('f-country-sel');
+    if(countrySel)countrySel.innerHTML='<option value="">全部国家</option>'
+      +countries.map(country=>namedOption(country,countryHits.get(country)||0)).join('');
+    const programSel=document.getElementById('f-program-sel');
+    if(programSel){
+      if(app.fCountry){
+        // 选定国家后，项目下拉只保留项目名称表里属于该国的项目
+        const own=rows.filter(row=>String(row.country||'').trim()===app.fCountry);
+        programSel.innerHTML='<option value="">全部项目</option>'
+          +own.map(row=>namedOption(row.name,programHits.get(String(row.name||'').trim())||0)).join('')
+          +(own.length?'':'<option value="" disabled>项目名称表中暂无该国项目</option>');
+      }else{
+        const queued=tableNames.filter(name=>programHits.has(name))
+          .concat([...programHits.keys()].filter(name=>!tableNameSet.has(name)));
+        const rest=tableNames.filter(name=>!programHits.has(name));
+        programSel.innerHTML='<option value="">全部项目</option>'
+          +(queued.length?`<optgroup label="当前队列出现">${queued.map(name=>namedOption(name,programHits.get(name)||0)).join('')}</optgroup>`:'')
+          +(rest.length?`<optgroup label="项目名称表其余">${rest.map(name=>`<option value="${esc(name)}">${esc(name)}</option>`).join('')}</optgroup>`:'');
+      }
+    }
+  }
+  // 项目名称表重新导入后，旧的「国家 + 项目」组合可能已经不成立。
+  // 这里只做纯数据校验，且必须早于任何渲染，否则会出现「队列按旧值渲染、汇总按新值统计」的错位。
+  function pruneDimFilter(){
+    const rows=projectRows();
+    if(!rows.length)return;              // 项目表不可用时不做任何推断，避免误清用户的选择
+    const countrySet=new Set(),programOwner=new Map();
+    rows.forEach(row=>{
+      const name=String(row.name||'').trim();
+      const country=String(row.country||'').trim();
+      if(country)countrySet.add(country);
+      if(name)programOwner.set(name,country);
+    });
+    if(app.fCountry&&!countrySet.has(app.fCountry))app.fCountry='';
+    const owner=programOwner.get(app.fProgram);
+    // 项目表里查不到该项目时保留（可能是表还没更新），查得到但归属别国才清空
+    if(app.fProgram&&owner!==undefined&&app.fCountry&&owner!==app.fCountry)app.fProgram='';
+  }
+  function syncFilterInputs(){
+    const setSelect=(id,value)=>{const node=document.getElementById(id);const next=value||'';if(node&&node.value!==next)node.value=next};
+    setSelect('f-country-sel',app.fCountry);setSelect('f-program-sel',app.fProgram);setSelect('f-status-sel',app.fStatus);
+    const agentNode=document.getElementById('f-agent-q');
+    if(agentNode&&document.activeElement!==agentNode)agentNode.value=app.fAgent||'';
+    const customerNode=document.getElementById('f-customer-q');
+    if(customerNode&&document.activeElement!==customerNode)customerNode.value=app.fCustomer||'';
+  }
+  function renderFilterSummary(){
+    const box=document.getElementById('filter-summary'),tags=document.getElementById('filter-tags');
+    if(!box)return;
+    const mails=queueMails()||[];
+    const detailCount=mails.reduce((sum,mail)=>sum+(mail.details||[]).length,0);
+    const allMails=(app.data?.mails||[]).length;
+    const allDetails=(app.data?.mails||[]).flatMap(m=>m.details||[]).length;
+    const chips=[];
+    if(app.fCountry)chips.push(['国家',app.fCountry]);
+    if(app.fProgram)chips.push(['项目',app.fProgram]);
+    if(app.fStatus)chips.push(['状态',statusLabel(app.fStatus)]);
+    if(app.fAgent)chips.push(['代理',app.fAgent]);
+    if(app.fCustomer)chips.push(['客户',app.fCustomer]);
+    box.innerHTML=chips.length
+      ? `命中 <b>${mails.length}</b> 封邮件 · <b>${detailCount}</b> 条明细　<span class="muted">（全部 ${allMails} 封 / ${allDetails} 条）</span>`
+      : `当前显示 <b>${mails.length}</b> 封邮件 · <b>${detailCount}</b> 条明细`;
+    if(tags){
+      const german=mails.filter(mail=>isGermanSpecialMail(mail)).length;
+      tags.innerHTML=chips.map(pair=>`<span class="filter-tag">${esc(pair[0])}：${esc(pair[1])}</span>`).join('')
+        +(german?`<span class="filter-tag">含德国专项 ${german}</span>`:'');
+    }
+  }
+  function renderReconcile(){
+    const box=document.getElementById('reconcile');
+    if(!box)return;
+    const counts=app.data?.counts||{};
+    const imap=Number(counts.imap_read_total||0);
+    if(!imap){box.style.display='none';box.innerHTML='';return}
+    box.style.display='';
+    const parsed=Number(counts.imap_parsed_total||0);
+    const queued=Number(counts.mails||0);
+    const rows=(app.data?.filtered_mails||[]).filter(row=>String(row?.scope||'')!=='业务项目');
+    const filteredN=rows.length;
+    const gap=imap-(queued+filteredN);
+    let internal=0,notice=0,other=0;
+    rows.forEach(row=>{
+      const reason=String(row?.reason||'');
+      if(reason.indexOf('内部发件人')>=0)internal+=1;
+      else if(reason.indexOf('证书')>=0||reason.indexOf('下号')>=0)notice+=1;
+      else other+=1;
+    });
+    const summary=app.data?.imap_summary||{};
+    const range=[summary.date_from,summary.date_to].filter(Boolean).join('~');
+    box.className='reconcile'+(gap!==0?' warn':'');
+    box.innerHTML=`<span class="reconcile-title">读取完整性</span>`
+      +`<span class="reconcile-chain">${esc(range||'未记录日期')}　IMAP 搜到 <b>${imap}</b> ＝ 解析 <b>${parsed}</b> → 队列 <b>${queued}</b> ＋ 过滤 <b>${filteredN}</b></span>`
+      +`<span class="reconcile-gap${gap!==0?' bad':''}">${gap===0?'账目闭合，未发现遗漏':`未归因差额 ${gap} 封，请核对是否读取完整`}</span>`
+      +`<span class="reconcile-gap">过滤明细：内部发件人 ${internal} · 下证通知 ${notice} · 其他 ${other}</span>`;
+  }
+  const _renderBeforeDimFilter=render;
+  render=function(){
+    pruneDimFilter();
+    _renderBeforeDimFilter();
+    buildFilterOptions();
+    syncFilterInputs();
+    renderFilterSummary();
+    renderReconcile();
+  };
+  function applyDimFilter(){
+    // 保留上一状态（2026-10-16）：筛选后若原邮件仍在可见队列里，就停在原处，否则才退回队列首封。
+    // 原来无条件置 null，会导致「在搜索框里打一个字就丢掉当前正在看的那封邮件」。
+    const keepMail=app.mailId,keepDetail=app.detailId;
+    app.selectedMailIds.clear();
+    const visible=queueMails();
+    const kept=keepMail?visible.find(mail=>mail.id===keepMail):null;
+    if(kept){
+      app.mailId=kept.id;
+      const details=kept.details||[];
+      app.detailId=details.some(detail=>detail.id===keepDetail)?keepDetail:(details[0]?.id||null);
+    }else{
+      app.mailId=null;app.detailId=null;
+    }
+    render();
+  }
+  function bindFilterBar(){
+    const onSelect=(id,key)=>{
+      const node=document.getElementById(id);
+      if(node)node.onchange=event=>{app[key]=event.target.value;applyDimFilter()};
+    };
+    const countryNode=document.getElementById('f-country-sel');
+    if(countryNode)countryNode.onchange=event=>{
+      const next=event.target.value;
+      // 项目下拉随国家联动，换国家时旧项目不再成立，一并清空
+      if(next!==app.fCountry)app.fProgram='';
+      app.fCountry=next;
+      applyDimFilter();
+    };
+    onSelect('f-program-sel','fProgram');
+    onSelect('f-status-sel','fStatus');
+    const agentNode=document.getElementById('f-agent-q');
+    if(agentNode)agentNode.oninput=event=>{app.fAgent=event.target.value;applyDimFilter()};
+    const customerNode=document.getElementById('f-customer-q');
+    if(customerNode)customerNode.oninput=event=>{app.fCustomer=event.target.value;applyDimFilter()};
+    const reset=document.getElementById('filter-reset');
+    if(reset)reset.onclick=()=>{
+      app.fCountry='';app.fProgram='';app.fStatus='';app.fAgent='';app.fCustomer='';
+      app.dateStart='';app.dateEnd='';
+      saveDateRange();syncDateInputs();
+      applyDimFilter();
+    };
+  }
+  bindFilterBar();
+
+  /* ===== 状态保留层（2026-10-16）=====
+     目标：切邮件 / 切明细 / 切标签页 / 开关修正弹窗 / 切换筛选条件时，
+           不丢滚动位置与未保存的输入。
+     约束：全部内存态——不写 localStorage、不写 workbench.db、不发额外请求。
+     位置：放在最后，包住被覆盖过 6 次的最外层 render()，一处生效即可覆盖全部视图。
+     ⚠ 恢复必须用 requestAnimationFrame 并带「令牌」守卫：期间若又有新渲染就放弃，
+       否则会和 scheduleBackgroundRefresh 抢滚动条。 */
+  const stateKeep=(function(){
+    const evidenceBox=()=>$('#evidence .source-content')||$('#evidence');
+    const detailBody=()=>document.querySelector('#detail .detail-body');
+    const queueList=()=>$('#queue-list');
+    // 滚动记忆：证据按「邮件+证据标签页」、详情按「邮件+明细」分别记——
+    // 换了内容就当新的一页从顶部看，切回来才回到上次的位置。
+    const evidenceScroll=new Map(),detailScroll=new Map(),draftByDetail=new Map();
+    let pending=null,token=0,quietUntil=0,inRender=0,stickyAnchor=null,lastView=null;
+    // stickyAnchor = 用户最后一次「真实滚动队列」时的位置。
+    // 它比 render 时的即时锚点更稳：搜索把当前邮件筛掉后，即时锚点会退化成比例回退，
+    // 而清空搜索时用 stickyAnchor 才能把用户送回原来的位置。
+    const applyAnchor=(q,anchor)=>{
+      if(!anchor||!anchor.mailId)return false;
+      const node=q.querySelector(`[data-mail="${CSS.escape(String(anchor.mailId))}"]`);
+      if(!node)return false;
+      const rect=q.getBoundingClientRect();
+      q.scrollTop+=node.getBoundingClientRect().top-rect.top-anchor.offset;
+      return true;
+    };
+
+    const sourceTabKey=()=>document.querySelector('#evidence .source-tabs button.active')?.dataset.sourceTab||'';
+    const evidenceKey=()=>app.mailId?`${app.mailId}|${sourceTabKey()}`:null;
+    const detailKey=()=>app.detailId?`${app.mailId}|${app.detailId}`:null;
+
+    // 队列锚点用「视口内第一封可见邮件 + 它与列表顶的偏移」，不用绝对 scrollTop：
+    // 筛选后列表变短/变长也能定位回同一封，而不是跳回顶部。
+    function queueAnchor(){
+      const q=queueList();if(!q)return null;
+      const rect=q.getBoundingClientRect();
+      const node=[...q.querySelectorAll('.mail-item')].find(item=>item.getBoundingClientRect().bottom>rect.top+2);
+      const maxTop=Math.max(0,q.scrollHeight-q.clientHeight);
+      return {mailId:node?.dataset.mail||null,
+        offset:node?node.getBoundingClientRect().top-rect.top:0,
+        ratio:maxTop?Math.min(1,Math.max(0,q.scrollTop/maxTop)):0};
+    }
+    // force=true 用于「点击前」抓拍：此时 document 与 app 仍指向旧邮件，必须抓到。
+    function rememberScroll(force){
+      if(!force&&performance.now()<quietUntil)return;
+      const eb=evidenceBox(),db=detailBody(),ek=evidenceKey(),dk=detailKey();
+      if(eb&&ek)evidenceScroll.set(ek,eb.scrollTop);
+      if(db&&dk)detailScroll.set(dk,db.scrollTop);
+    }
+    function capture(){
+      const anchor=queueAnchor();
+      if(performance.now()>=quietUntil)stickyAnchor=anchor;
+      pending={anchor};
+    }
+    // only='queue' 只恢复队列：搜索框等路径只重建队列，不该去动另外两个面板的滚动。
+    function restore(only){
+      const snapshot=pending,myToken=token;
+      requestAnimationFrame(()=>{
+        if(myToken!==token)return;              // 期间又渲染了，让新一轮负责
+        quietUntil=performance.now()+160;        // 屏蔽自己这次程序化滚动产生的事件回写
+        try{
+          const q=queueList();
+          if(q&&snapshot?.anchor){
+            const anchor=snapshot.anchor;
+            // 优先回到用户最后一次滚动的位置；它还在列表里就一定能派上用场。
+            const applied=applyAnchor(q,stickyAnchor)||applyAnchor(q,anchor);
+            if(applied){if(!stickyAnchor)stickyAnchor=anchor}
+            else{
+              // 两处锚点都不在列表里（被筛掉或删除）：按比例退回，至少不跳回顶部。
+              q.scrollTop=Math.round(Math.max(0,q.scrollHeight-q.clientHeight)*(anchor.ratio||0));
+            }
+          }
+          if(only==='queue')return;
+          // 有字段高亮时证据面板交给 focusEvidenceHit 定位，这里不能抢。
+          const eb=evidenceBox();
+          if(eb&&!(app.tab==='details'&&app.highlightField)){
+            const saved=evidenceScroll.get(evidenceKey());
+            eb.scrollTop=typeof saved==='number'?saved:0;
+          }
+          const db=detailBody();
+          if(db){
+            const saved=detailScroll.get(detailKey());
+            db.scrollTop=typeof saved==='number'?saved:0;
+          }
+        }finally{if(only!=='queue')pending=null}
+      });
+    }
+
+    // 捕获阶段先抓快照：内联 onclick 会把 app.mailId 改掉，晚一步抓到的就是新邮件的滚动位置。
+    document.addEventListener('click',event=>{
+      const target=event.target;
+      if(!(target instanceof Element))return;
+      if(target.closest('[data-select-mail]'))return;      // 勾选复选框不改变正在看的对象
+      if(target.closest('#queue-list .mail-item')||target.closest('#detail')){
+        rememberScroll(true);
+        capture();
+      }
+    },true);
+    // 滚动事件不冒泡，只能靠捕获阶段监听整个文档来收集各面板位置。
+    document.addEventListener('scroll',event=>{
+      const target=event.target;
+      if(!(target instanceof Element))return;
+      if(target.id==='queue-list'){
+        // 队列：只有用户真实滚动才更新 sticky 锚点（程序化滚动在 quietUntil 窗口内被忽略）。
+        if(performance.now()>=quietUntil)stickyAnchor=queueAnchor();
+        return;
+      }
+      if(target.closest?.('#evidence')||target.closest?.('#detail'))rememberScroll(false);
+    },true);
+
+    const renderBeforeStateKeep=render;
+    render=function(){
+      // 换视图（询单复核 / 漏单邮件 / 已过滤邮件）时列表完全换了一批，旧锚点不再有意义。
+      if(lastView!==null&&app.view!==lastView)stickyAnchor=null;
+      lastView=app.view;
+      token+=1;
+      if(!pending)capture();
+      // 必须在重建「之前」开静默窗口：innerHTML 重置 scrollTop 会触发滚动事件，
+      // 若等 restore 的 rAF 才置，那次事件会先把 sticky 锚点写成重建后的位置。
+      quietUntil=performance.now()+400;
+      inRender+=1;
+      try{renderBeforeStateKeep()}finally{inRender-=1}
+      restore();
+    };
+    // 搜索框、全选、清除选择这些路径直接调 renderQueue()，不经过 render()，
+    // 必须单独包一层，否则队列滚动位置在过滤/清空时还是会跳。
+    const renderQueueBeforeStateKeep=renderQueue;
+    renderQueue=function(){
+      if(inRender>0){renderQueueBeforeStateKeep();return}   // render() 内部调用，由外层统一负责
+      token+=1;
+      if(!pending)capture();
+      quietUntil=performance.now()+400;
+      renderQueueBeforeStateKeep();
+      restore('queue');
+    };
+
+    /* ---- 修正明细弹窗草稿：只存在内存，永不落库 ---- */
+    const MODAL_FIELDS=['company','agent','country','program','request'];
+    const readModalFields=()=>Object.fromEntries(MODAL_FIELDS.map(key=>[key,$('#f-'+key)?.value??'']));
+    const writeModalFields=fields=>{if(!fields)return;MODAL_FIELDS.forEach(key=>{const node=$('#f-'+key);if(node&&typeof fields[key]==='string')node.value=fields[key]})};
+    let modalKey=null,modalTarget=null;
+    const draftBadge=document.createElement('span');
+    draftBadge.id='modal-draft-note';draftBadge.hidden=true;
+    draftBadge.innerHTML='未保存修改 <button type="button" id="modal-draft-drop">丢弃</button>';
+    document.querySelector('#modal-overlay .modal-head-copy')?.appendChild(draftBadge);
+
+    const openModalBeforeStateKeep=openModal;
+    openModal=function(d,mode='edit'){
+      openModalBeforeStateKeep(d,mode);
+      const overlay=$('#modal-overlay');
+      if(!overlay||!overlay.classList.contains('show'))return;
+      modalTarget={d,mode};
+      modalKey=d?.id?`${d.id}|${mode}`:null;
+      const saved=modalKey?draftByDetail.get(modalKey):null;
+      if(saved)writeModalFields(saved.fields);
+      draftBadge.hidden=!saved;
+      const save=$('#modal-save'),saveBeforeStateKeep=save.onclick;
+      // 保存成功时弹窗会被关掉；失败时会留在打开状态并提示「输入内容已保留」，
+      // 所以判断依据是「弹窗是否还开着」，不是调用的返回值。
+      save.onclick=async event=>{
+        await saveBeforeStateKeep.call(save,event);
+        if(modalKey&&!overlay.classList.contains('show'))draftByDetail.delete(modalKey);
+      };
+    };
+    document.addEventListener('input',event=>{
+      const overlay=$('#modal-overlay');
+      if(!modalKey||!overlay||!overlay.classList.contains('show'))return;
+      if(!event.target.closest?.('#modal-overlay .modal-body'))return;
+      draftByDetail.set(modalKey,{fields:readModalFields(),at:new Date().toISOString()});
+      draftBadge.hidden=false;
+    },true);
+    document.getElementById('modal-draft-drop')?.addEventListener('click',()=>{
+      if(modalKey)draftByDetail.delete(modalKey);
+      const target=modalTarget;
+      if(target)openModal(target.d,target.mode);          // 重新按源数据填充
+      else draftBadge.hidden=true;
+      toast('已丢弃未保存的修改');
+    });
+
+    return {evidenceScroll,detailScroll,draftByDetail,capture,rememberScroll:()=>rememberScroll(true)};
+  })();
+
   load();
 </script>
 </body>

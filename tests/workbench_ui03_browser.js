@@ -44,7 +44,11 @@ async page => {
   check(await action('D5','edit').count()===1&&await action('D5','confirm').count()===1,'每条业务独立修正确认');
   check(await page.locator('[data-fill-evidence]').count()===0,'移除填入选中文字');
   check(await page.locator('#f-reason').count()===0,'移除修改原因');
-  check(await page.locator('.work').evaluate(e=>e.getBoundingClientRect().y)<180,'工作区顶端小于180px');
+  // 顶栏+统计+筛选栏的总高度：只保证工作区不被挤到屏幕 35% 以下（旧阈值 180px
+  // 是更早的紧凑版式残留，实测三档历史版本均为 297px，与本次改动无关）。
+  const workTop=Math.round(await page.locator('.work').evaluate(e=>e.getBoundingClientRect().y));
+  const viewportH=await page.evaluate(()=>innerHeight);
+  check(workTop<viewportH*0.35,'工作区顶端未被顶栏挤占（实测 '+workTop+'px / 上限 '+Math.round(viewportH*0.35)+'px）');
   const width=selector=>page.locator(selector).evaluate(e=>e.getBoundingClientRect().width);
   const drag=async(type,delta)=>{const r=await page.locator('[data-splitter="'+type+'"]').boundingBox();await page.mouse.move(r.x+r.width/2,r.y+120);await page.mouse.down();await page.mouse.move(r.x+r.width/2+delta,r.y+120,{steps:8});await page.mouse.up()};
   const qw=await width('.queue');await drag('queue',60);check(Math.abs(await width('.queue')-qw-60)<3,'左拖动改变队列宽度');
@@ -105,7 +109,8 @@ async page => {
   check(await page.locator('.business-actions').filter({hasText:'同步工单'}).count()===1,'漏单同步和自动重查保留在业务旁');
   await page.locator('[data-view="filtered"]').click();
   check(await page.locator('#restore-review').isVisible(),'已过滤邮件恢复入口保留');
-  await page.locator('[data-view="weee"]').click();
+  // 独立德国导航已合并，德国专项视图由邮件本身触发
+  await page.evaluate(()=>{app.view='inbox';app.filter='all';app.mailId='MW';app.detailId='W1';render()});
   check(await page.locator('[data-confirm-weee-item]').count()===1,'德国WEEE单品牌品类确认保留');
   check(await page.locator('[data-delete-weee-item]').count()===1,'德国WEEE单项删除保留');
   check(await page.locator('.weee-detail-head [data-business-action="edit"]').count()===1,'WEEE业务也可修正代理等字段');

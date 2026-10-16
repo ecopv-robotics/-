@@ -215,7 +215,7 @@ def battery_review(program, saved, source_items, status):
             "status": "confirmed" if confirmed else "pending"}
 
 
-def normalize_battery_items(raw_items, previous_items=(), confirm_id="", delete_id=""):
+def normalize_battery_items(raw_items, previous_items=(), confirm_id="", delete_id="", confirm_all=False):
     if not isinstance(raw_items, list) or len(raw_items) > 200:
         raise ValueError("电池品牌/品类格式不正确，一次最多200项")
     previous = {item.get("item_id"): item for item in previous_items if isinstance(item, dict)}
@@ -237,7 +237,9 @@ def normalize_battery_items(raw_items, previous_items=(), confirm_id="", delete_
         # field that the reviewer must manually edit. Confirmation is brand + class.
         complete = bool(item["brand"] and item["category_class"])
         # Only an explicit confirmation or unchanged saved confirmation is trusted.
-        item["battery_confirmed"] = bool(complete and (item_id == confirm_id or (
+        # confirm_all 用于“整条电池明细一次确认”：与 WEEE 的整体确认对称，
+        # 只有 brand + category_class 都齐全的项才被置为已确认。
+        item["battery_confirmed"] = bool(complete and (confirm_all or item_id == confirm_id or (
             old.get("battery_confirmed") and all(old.get(key) == item[key] for key in keys))))
         item["item_id"] = item_id
         for key in ("source", "evidence", "confidence"):

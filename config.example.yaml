@@ -17,7 +17,11 @@ workorder:
   url: 'https://mp.ecopv-epr.com/system/user'
   username: ''
   password: ''
-  headless: false
+  # 无头运行：复用 storage/login_state.json 里的登录态直接进系统，不再每次弹窗等人工输验证码。
+  # 登录态缺失/过期时会按 headless_fallback_to_headed 临时弹一次有头窗口让人输验证码，
+  # 成功后自动落盘并切回无头。首次使用或 cookie 失效时才会看到浏览器窗口。
+  headless: true
+  headless_fallback_to_headed: true
   browser_channel: msedge
   timeout: 30
   date_window_months: 1
@@ -50,3 +54,23 @@ logging:
   level: INFO
 ocr:
   fallback: true
+crm_api:
+  # 业务系统开放平台（替代阶段二浏览器 RPA）。
+  # enabled=true 后，阶段二优先走 API；取不到 token 时仍可回退到浏览器模式。
+  enabled: false
+  # 环境：prod / test
+  env: prod
+  # clientKey / clientSecret **不写在这里**：由 utils/import_openapi_cred.py
+  # 导入到下面这个 DPAPI 密文文件（绑定本机 Windows 账户，拷走也解不开）。
+  credential_file: storage/openapi.cred
+  timeout: 30
+  # 签名模式：raw=Base64(SHA256 原始字节)，hex=Base64(SHA256 十六进制串)。
+  # 若取 token 报签名错误，改成 hex 再试。
+  sign_mode: raw
+  profiles:
+    prod:
+      base_url: 'https://mp.ecopv-epr.com/api'
+      client_id: ''
+    test:
+      base_url: 'https://test.ecopv-epr.com/api'
+      client_id: ''

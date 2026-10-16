@@ -633,8 +633,8 @@ def _subject_loose_company(subject: Any) -> str:
     tail = text[code.end():].strip(" \t-—_:：+＋")
     boundary = re.search(
         r"(?:德国|比利时|比利時|法国|法國|意大利|義大利|西班牙|荷兰|荷蘭|"
-        r"波兰|波蘭|瑞典|爱尔兰|愛爾蘭|葡萄牙|奥地利|奧地利|芬兰|芬蘭|"
-        r"WEEE|EEE|EPR|电池法|電池法|包装法|包裝法|注册|註冊|新注册|新註冊|"
+        r"波兰|波蘭|瑞典|爱尔兰|愛爾蘭|葡萄牙|奥地利|奧地利|芬兰|芬蘭|斯洛伐克|"
+        r"WEEE|EEE|EPR|电池法|電池法|包装法|包裝法|一次性塑料|注册|註冊|新注册|新註冊|"
         r"申报|申報|注销|註銷|修改|变更|變更)",
         tail,
         re.I,
@@ -3370,7 +3370,7 @@ class WorkbenchStore:
         allowed = {
             "edit", "confirm", "confirm_detail", "return", "needs_info", "agent_confirm", "reset",
             "confirm_weee", "confirm_weee_item", "save_weee_draft", "delete_weee_item",
-            "confirm_battery_item", "save_battery_draft", "delete_battery_item",
+            "confirm_battery_item", "confirm_battery", "save_battery_draft", "delete_battery_item",
             "add_project", "delete_project", "delete_mail", "bulk_confirm", "move_to_filtered",
             "move_to_review", "bulk_filter", "bulk_restore",
             "manual_workorder_result", "queue_workorder_retry",
@@ -3433,16 +3433,17 @@ class WorkbenchStore:
             reason = _text(payload.get("reason"))
             before_fields = self._effective_fields(state, rid)
             changed_fields: Dict[str, Dict[str, str]] = {}
-            if action in {"save_battery_draft", "confirm_battery_item", "delete_battery_item"}:
+            if action in {"save_battery_draft", "confirm_battery_item", "confirm_battery", "delete_battery_item"}:
                 if not is_german_battery(before_fields.get("program")):
                     raise ValueError("电池品类只能保存到德国电池法业务")
                 target_id = _text(payload.get("battery_item_id"))
-                if action != "save_battery_draft" and not target_id:
+                if action in {"confirm_battery_item", "delete_battery_item"} and not target_id:
                     raise ValueError("缺少电池品牌/品类项目编号")
                 items = normalize_battery_items(
                     payload.get("battery_items"), entry.get("battery_items") or [],
                     confirm_id=target_id if action == "confirm_battery_item" else "",
-                    delete_id=target_id if action == "delete_battery_item" else "")
+                    delete_id=target_id if action == "delete_battery_item" else "",
+                    confirm_all=action == "confirm_battery")
                 entry["battery_items"] = items
                 complete = bool(items) and all(item["battery_confirmed"] for item in items)
                 now = _now()
@@ -3450,12 +3451,14 @@ class WorkbenchStore:
                 if action != "save_battery_draft":
                     entry["status"] = "confirmed" if complete else "ready"
                     entry["events"].append({"at": now, "action": action,
-                        "label": "确认电池品牌/品类" if action == "confirm_battery_item" else "删除电池品牌/品类项",
+                        "label": "删除电池品牌/品类项" if action == "delete_battery_item" else "确认电池品牌/品类",
                         "reason": reason, "battery_item_id": target_id,
+                        "battery_item_count": len(items),
                         "mail_number": _text(payload.get("mail_number")),
                         "detail_number": _text(payload.get("detail_number")) or rid})
                 _save_json(self.state_path, state)
-                return finish({"ok": True, "message": "电池品牌/品类已保存",
+                return finish({"ok": True,
+                    "message": "电池品牌/品类已确认" if action == "confirm_battery" and complete else "电池品牌/品类已保存",
                     "battery": battery_review(before_fields["program"], entry, [], entry.get("status", "ready"))})
             if action == "save_weee_draft":
                 normalized_items = _normalize_weee_draft_items(payload.get("weee_items"))

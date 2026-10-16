@@ -573,31 +573,6 @@ class LLMIntentClient:
         )
         return step.payload
 
-    def batch_classify(self, mails: List[dict]) -> Dict[str, dict]:
-        """
-        批量分类邮件
-        mails: [{uid, subject, body_text, attachments, ...}, ...]
-        返回: {uid: classify_result}
-        """
-        results = {}
-        total = len(mails)
-        for idx, mail in enumerate(mails, 1):
-            uid = mail.get("uid", str(idx))
-            subject = mail.get("subject", "") or ""
-            body = mail.get("body_text", "") or ""
-            attachments = mail.get("attachments", [])
-
-            self._log(f"[Agent进度] 意图识别Agent {idx}/{total}: {subject[:40]}")
-            result = self.classify_email(subject, body, attachments)
-            if result:
-                results[uid] = result
-            else:
-                results[uid] = {"is_target": None, "intent": "", "email_type": "LLM失败", "reason": "API调用失败"}
-
-            time.sleep(0.5)
-
-        return results
-
     def extract_fields_llm(
         self, subject: str, body: str, attachments: list, sender_email: str = ""
     ) -> Optional[dict]:

@@ -20,7 +20,13 @@ def worker_method(name, extra=None):
 
 
 def worker(mode, stopped):
+    # run() 在 mode in {"stage2", "all"} 时会先调用 validate_workorder_url(
+    # self.config["workorder"]["url"]) 做配置校验（拒绝缺失或示例域名，
+    # 避免把未连接工单系统报告成已核对）。替身必须提供 config，
+    # 否则会先抛 AttributeError 落到 error 分支，取消信号就发不出来。
+    # 这里用 .test 保留域名，既是合法地址又不会指向真实系统。
     obj = SimpleNamespace(mode=mode, _stop=stopped, _stage1_phase='邮件下载与附件解析',
+                          config={'workorder': {'url': 'https://workorder.test/'}},
                           _create_run_logger=Mock(return_value=Mock()),
                           _run_pipeline_stage1=Mock(return_value=None),
                           _detach_gui_log_handler=Mock(),

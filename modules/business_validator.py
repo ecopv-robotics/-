@@ -7,10 +7,20 @@ from typing import Dict, List
 _PLACEHOLDER_COMPANIES = {
     "一家公司", "一个公司", "一家企业", "某公司", "公司", "客户", "客户公司",
     "公司a", "公司b", "companya", "companyb", "unknown", "未知公司",
-    "待确认", "暂无", "不详", "无", "非中国公司", "非中国企业",
+    "待确认", "暂无", "不详", "无", "必填", "非中国公司", "非中国企业",
     "中国公司", "外国公司", "国公司", "不能与其它公司", "不能与其他公司",
     "公司中文名称", "公司英文名称", "中文公司名称", "英文公司名称",
     "公司中文名", "公司英文名", "companyname", "companynameinchinese", "companynameinenglish",
+}
+# 代理字段的占位词。与公司占位词分开维护：代理是来源方标识，“待定/未知”
+# 这类值在阶段二无法在工单平台检索到对应代理，必须交人工确认。
+# 注意只用于“标记人工复核”，不改写原始提取值——附件名里确实存在 TBA
+# 这类业务代号，是否有效只能由人工判断，程序不做取舍。
+_PLACEHOLDER_AGENTS = {
+    "tba", "tbd", "to be advised", "to be determined", "n/a", "na", "none", "null",
+    "待定", "未知", "未提供", "暂无", "待确认", "不详", "待补", "待补全",
+    "必填", "请填写", "请选择", "代理", "代理名称", "代理待定",
+    "agent", "agentname",
 }
 _SENTENCE_PREFIXES = (
     "适用于", "適用於", "请提供", "請提供", "请查收", "請查收",
@@ -102,6 +112,12 @@ def inspect_row(row: Dict, agent_alias_index: Dict = None) -> List[dict]:
         add_issue("company", "COMPANY_FORM_NOTE", "客户字段是表单说明句，不是真实公司名称")
     elif _company_matches_agent_alias(company, agent, agent_alias_index):
         add_issue("company", "COMPANY_EQUALS_AGENT", "客户公司命中代理名称或其已配置别名，可能误把代理提取为客户")
+
+    # 代理占位词只标记、不复写：附件名里确实存在 TBA 这类业务代号，
+    # 它是“待定”还是真实代理简称只能由人工判断。这里拦住的是
+    # “拿占位词去阶段二检索工单”这种必然查不到的情况。
+    if agent and _identity_key(agent) in _PLACEHOLDER_AGENTS:
+        add_issue("agent", "AGENT_PLACEHOLDER", "代理字段是占位词（待定/未知），需人工确认有效代理")
 
     project = str(row.get("项目", "") or "").strip()
     if not project:
