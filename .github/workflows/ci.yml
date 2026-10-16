@@ -111,8 +111,11 @@ jobs:
       # 更适合无头环境。
       - name: 启动服务并运行浏览器用例
         env:
+          # 只写一份：GitHub Actions 的环境变量名大小写不敏感，
+          # 同时写 NO_PROXY 和 no_proxy 会被判为重复 key 而报
+          # "Invalid workflow file: 'no_proxy' is already defined"。
+          # Linux 下 NO_PROXY 即生效，无需再写小写别名。
           NO_PROXY: "localhost,127.0.0.1"
-          no_proxy: "localhost,127.0.0.1"
         run: |
           set -o pipefail
           python workbench_launcher.py --port 8765 --no-browser > /tmp/workbench.log 2>&1 &
