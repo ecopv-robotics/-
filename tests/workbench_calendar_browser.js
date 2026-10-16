@@ -100,6 +100,26 @@ async page => {
   check(await page.evaluate(()=>app.dateStart==='2026-08-24'&&app.dateEnd==='2026-08-25'),'倒序日期自动交换仍生效');
   await page.locator('#clear-date-range').click();check(await page.evaluate(()=>app.dateStart===''&&app.dateEnd===''),'全部日期按钮保留');
   await open();await page.setViewportSize({width:390,height:844});
+  // 等 resize 触发的重新定位真正生效再断言。
+  // positionReviewCalendar() 挂在 window.resize 上，而 setViewportSize() 返回时该
+  // 事件可能还没派发 —— 此时样式里的 left 仍是按上一个视口（1600）算出来的，
+  // 直接断言必然读到 r.right 远超 390。Windows 本地靠时序侥幸通过，Linux CI 上
+  // 稳定失败（2026-10-16 实测），属于测试竞态而非页面缺陷：
+  // .date-calendar 本身已有 width:296px;max-width:calc(100vw - 16px)，
+  // 390px 视口下宽度 296 完全放得下。
+  // 超时则抛出实际数值，便于区分「竞态」与「真的超宽」。
+  await page.waitForFunction(()=>{
+    const box=document.getElementById('review-date-calendar');
+    if(!box||box.hidden)return false;
+    const r=box.getBoundingClientRect();
+    return r.left>=0&&r.right<=innerWidth+1;
+  },null,{timeout:3000}).catch(async()=>{
+    const actual=await page.locator('#review-date-calendar').evaluate(e=>{
+      const r=e.getBoundingClientRect();
+      return {left:Math.round(r.left),right:Math.round(r.right),width:Math.round(r.width),innerWidth};
+    });
+    throw new Error('小屏日历确实超出屏幕（非竞态）：'+JSON.stringify(actual));
+  });
   check(await page.locator('#review-date-calendar').evaluate(e=>{const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1}),'小屏日历不超出屏幕');
   await page.keyboard.press('Escape');await page.setViewportSize({width:1600,height:1000});
   check(errors.length===0,'无页面脚本异常 '+JSON.stringify(errors));
