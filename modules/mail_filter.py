@@ -94,6 +94,41 @@ def is_german_single_use_non_target(project: str, country: str = "") -> bool:
     """Whether a normalized business row is the explicitly excluded German SUP tax project."""
     return bool(_GERMAN_SINGLE_USE_PLASTICS.search(f"{country or ''} {project or ''}"))
 
+
+def downgrade_orphan_project_filters(project_filtered_records: List[tuple],
+                                     surviving_mail_keys: Set) -> int:
+    """把「整封业务都被过滤」的项目级过滤记录降级为整封过滤，返回降级条数。
+
+    背景（2026-10-16 实测，修复自真实的计数不一致）：
+    标着 ``filter_scope="业务项目"`` 的过滤记录，语义是「这封邮件只有**部分**业务被
+    过滤，其余业务仍作为活动邮件存在」，所以下游计数时**不计入邮件总数**，以免与
+    活动邮件重复计数 —— ``workbench_server.py`` 的 ``total_mails`` 与前端
+    ``workbench.html`` 的「邮件总数」公式都是这个口径。
+
+    但若一封邮件过滤后一行都没留下，它根本不会成为活动邮件，这条记录就两头都不算：
+    实测 IMAP 读到 66 封、界面「邮件总数」只显示 65，差额正是这样一条孤儿记录
+    （该记录的 id 与主题在活动邮件里都查不到）。
+
+    这类记录应视为「整封过滤」，即把 ``filter_scope`` 置空，让它按普通已过滤邮件
+    正常计一封；下游 ``workbench_server.py`` 会走 else 分支，用「过滤原因」填人工
+    复核提示，语义仍然一致。
+
+    :param project_filtered_records: ``[(mail_key, record), ...]``，
+        ``mail_key`` 为该记录所属邮件的标识（与 ``surviving_mail_keys`` 同源可比）
+    :param surviving_mail_keys: 过滤后**仍有业务保留**的邮件标识集合
+    :return: 被降级的记录条数
+    """
+    if not project_filtered_records:
+        return 0
+    survivors = surviving_mail_keys or set()
+    downgraded = 0
+    for mail_key, record in project_filtered_records:
+        if mail_key in survivors:
+            continue
+        record["filter_scope"] = ""
+        downgraded += 1
+    return downgraded
+
 # 明确无关的关键词（出现这些且不含业务词 → 过滤）
 KEYWORDS_IRRELEVANT = {
     "账单", "invoice", "合同", "协议",

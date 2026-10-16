@@ -1102,8 +1102,13 @@ class WorkerThread(QThread):
 
         # 目标范围在项目拆分后逐行判断：一封邮件同时含目标项目和德国一次性
         # 塑料税时，只过滤非目标项目，不整封邮件误删；过滤原因进入过滤日志。
-        from modules.mail_filter import is_german_single_use_non_target
+        from modules.mail_filter import (
+            downgrade_orphan_project_filters,
+            is_german_single_use_non_target,
+        )
         kept_rows, kept_keys, excluded_projects = [], [], set()
+        # 记下每条项目级过滤记录对应的邮件，循环结束后统一判断是否需要降级（见下）。
+        project_filtered_records = []
         for index, row in enumerate(normalized_rows):
             project = str(row.get("项目", "") or "").strip()
             if is_german_single_use_non_target(project, str(row.get("国家", "") or "")):
@@ -1116,7 +1121,7 @@ class WorkerThread(QThread):
                         for name in str(row.get("附件名称", "") or "").split("；")
                         if name.strip()
                     ]
-                    filtered_mails.append({
+                    record = {
                         "sender_email": row.get("sender_email", ""),
                         "recipient": row.get("recipient", ""),
                         "date": row.get("date"),
@@ -1133,7 +1138,9 @@ class WorkerThread(QThread):
                         "filter_request": row.get("需求", ""),
                         "filter_status": "filtered",
                         "hard_filter": True,
-                    })
+                    }
+                    filtered_mails.append(record)
+                    project_filtered_records.append((mail_key, record))
                 continue
             kept_rows.append(row)
             if index < len(mail_keys):
@@ -1141,6 +1148,16 @@ class WorkerThread(QThread):
         normalized_rows, mail_keys = kept_rows, kept_keys
         if excluded_projects:
             logger.info(f"项目范围过滤: 德国一次性塑料税 {len(excluded_projects)} 项；同封其它目标项目保留")
+
+        # 整封过滤降级（2026-10-16 修）：判定与处置都在
+        # modules/mail_filter.downgrade_orphan_project_filters 里，那里有完整背景
+        # 说明，也是单测直接覆盖的入口。此处 mail_keys 已换成保留行的 key 集合。
+        downgraded = downgrade_orphan_project_filters(project_filtered_records, set(mail_keys))
+        if downgraded:
+            logger.info(
+                f"整封过滤降级: {downgraded} 条项目级过滤记录改为整封过滤"
+                f"（该邮件过滤后已无剩余业务，原先会被漏计）"
+            )
         logger.info(f"项目标准化完成: {len(normalized_rows)} 行")
         # M4.2: 确定性业务校验先拦截“一家公司”、说明句、文件名、空项目等
         # 明显异常。它只打标，不改写模型/规则提取值。
