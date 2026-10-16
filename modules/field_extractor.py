@@ -771,7 +771,12 @@ class FieldExtractor:
             filepath = str(attachment.get("filepath") or "").strip()
             if not filename or not filepath:
                 continue
-            token = os.path.basename(filepath)
+            # 先把反斜杠统一成 "/" 再取 basename：os.path.basename 在 Windows 上
+            # 认两种分隔符，但在 Linux 上只认 "/"，遇到 Windows 风格路径
+            # （cache\attachments\x.jpg）会原样返回整串。实测 CI（Linux runner）
+            # 的 test_attachment_file_index_keeps_same_named_attachments_separate
+            # 就是这么挂的。改后在 Windows 上结果完全一致（两种分隔符都能切）。
+            token = os.path.basename(filepath.replace("\\", "/"))
             if not token or token in {".", ".."}:
                 continue
             # 相同文件名甚至相同内容也可能是邮件中的两个独立附件；序号只用于
