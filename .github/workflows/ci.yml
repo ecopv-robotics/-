@@ -76,7 +76,10 @@ jobs:
       - name: 运行测试
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest tests/ -q
+        # 用 python -m pytest 而不是裸 pytest：前者会把当前目录（项目根）加入
+        # sys.path。虽然 pytest.ini 里的 pythonpath=. 已经兜住了这件事，
+        # 这里仍与本地推送脚本保持同一种调用方式，避免两边行为再次分叉。
+        run: python -m pytest tests/ -q
 
   browser:
     name: 浏览器交互测试
