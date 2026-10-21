@@ -14,8 +14,8 @@
     const mode=$('mode').value,stage2=mode==='stage2';
     $('dates').hidden=stage2;$('stage1-inputs').hidden=stage2;$('stage2-inputs').hidden=!stage2;
     $('date-from').required=$('date-to').required=!stage2;
-    $('start').textContent=stage2?'开始工单核对':mode==='all'?'开始一站式运行':'开始邮件解析';
-    $('mode-help').textContent=stage2?'只查询所选文件中符合条件的业务明细。':mode==='all'?'沿用桌面一站式流程：解析后继续查询。需要先人工复核时，请选择阶段一。':'仅处理所选日期范围内的邮件；不会扫描全部邮件。';
+    $('start').textContent=stage2?'开始工单核对':'开始邮件解析';
+    $('mode-help').textContent=stage2?'只查询所选文件中符合条件的业务明细。':'仅处理所选日期范围内的邮件；不会扫描全部邮件。';
   }
   async function request(path,payload={},upload=null){
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),45000);
@@ -38,7 +38,7 @@
   }
   function render(data){
     state=data;csrf=data.csrf;connected=true;$('build').textContent=data.build;
-    if(initial){const saved=data.session;$('mode').value=['stage1','stage2','all'].includes(saved.mode)?saved.mode:'stage1';
+    if(initial){const saved=data.session;$('mode').value=['stage1','stage2'].includes(saved.mode)?saved.mode:'stage1';
       $('date-from').value=saved.date_from;$('date-to').value=saved.date_to;
       $('email-address').value=data.credentials.email_address;$('wo-user').value=data.credentials.workorder_username;modeChanged();initial=false;}
     $('email-password').placeholder=data.credentials.email_password_set?'已配置，留空保持不变':'尚未配置，请填写';

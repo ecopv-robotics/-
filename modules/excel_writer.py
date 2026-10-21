@@ -962,6 +962,37 @@ class ExcelWriter:
         outputs = []
 
         for category, business_project, country, items in cls._workorder_result_groups(row):
+            business = business_project
+            if request:
+                business = f"{business} - {request}" if business else request
+
+            # 德国 WEEE / 电池法：每个品牌×品类都是独立的核对目标（反馈 R20：
+            # 确认两个品牌必须出两条数据），逐行展开，不能把多个品牌合并成一格。
+            if items and category in ("德国WEEE", "德国电池法"):
+                expanded = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    item_brand = str(item.get("brand") or item.get("品牌") or "").strip()
+                    item_category = str(item.get("category") or item.get("category_name") or "").strip()
+                    item_class = str(
+                        item.get("category_class_name") or item.get("category_class") or ""
+                    ).strip()
+                    expanded.append([
+                        category,
+                        agent,
+                        country,
+                        business,
+                        company,
+                        item_brand or "无",
+                        cls._workorder_german_classification(category, item_category, item_class) or "无",
+                        success,
+                        failure_reason,
+                    ])
+                if expanded:
+                    outputs.extend(expanded)
+                    continue
+
             brands = [str(item.get("brand") or item.get("品牌") or "") for item in items]
             if not cls._unique_text(brands):
                 raw_brand = row.get("品牌") or row.get("品牌名称") or ""
@@ -978,9 +1009,6 @@ class ExcelWriter:
                     cls._workorder_german_classification(category, category_value, class_value)
                 )
 
-            business = business_project
-            if request:
-                business = f"{business} - {request}" if business else request
             outputs.append([
                 category,
                 agent,

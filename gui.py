@@ -1782,18 +1782,14 @@ class MainWindow(QMainWindow):
         mode_group = QGroupBox("运行模式")
         mode_layout = QHBoxLayout(mode_group)
         mode_layout.setContentsMargins(8, 4, 8, 4)
-        self.radio_all = QRadioButton("一站式")
         self.radio_stage1 = QRadioButton("阶段一：邮件解析")
         self.radio_stage2 = QRadioButton("阶段二：工单核对")
-        self.radio_all.setToolTip("邮件解析完成后继续执行工单比对")
         self.radio_stage1.setToolTip("只拉取和解析邮件，不访问工单系统")
         self.radio_stage2.setToolTip("读取阶段一工单待查 Excel，不重新读取邮箱")
-        self.radio_all.setChecked(True)
+        self.radio_stage1.setChecked(True)
         mode_btn_group = QButtonGroup(self)
-        mode_btn_group.addButton(self.radio_all, 0)
         mode_btn_group.addButton(self.radio_stage1, 1)
         mode_btn_group.addButton(self.radio_stage2, 2)
-        mode_layout.addWidget(self.radio_all)
         mode_layout.addWidget(self.radio_stage1)
         mode_layout.addWidget(self.radio_stage2)
         header.addWidget(mode_group)
@@ -1889,7 +1885,6 @@ class MainWindow(QMainWindow):
         ctrl_layout.addWidget(self.stage2_panel)
         self.stage2_panel.setVisible(False)
         # 模式切换时显示/隐藏
-        self.radio_all.toggled.connect(self._on_mode_changed)
         self.radio_stage1.toggled.connect(self._on_mode_changed)
         self.radio_stage2.toggled.connect(self._on_mode_changed)
 
@@ -2180,13 +2175,12 @@ class MainWindow(QMainWindow):
             )
             self.chk_force_live.setChecked(True)
             # 恢复运行模式
-            mode = state.get("mode", "all")
-            if mode == "stage1":
-                self.radio_stage1.setChecked(True)
-            elif mode == "stage2":
+            mode = state.get("mode", "stage1")
+            if mode == "stage2":
                 self.radio_stage2.setChecked(True)
             else:
-                self.radio_all.setChecked(True)
+                # 旧会话可能保存过已下线的 "all"（一站式），一律回到阶段一。
+                self.radio_stage1.setChecked(True)
             self._on_mode_changed()
         except Exception as e:
             self.log(f"[WARNING] 恢复会话状态失败: {e}")
@@ -2198,7 +2192,7 @@ class MainWindow(QMainWindow):
         elif self.radio_stage1.isChecked():
             mode = "stage1"
         else:
-            mode = "all"
+            mode = "stage1"
         state = {
             "date_from": self.date_from.date().toString("yyyy-MM-dd"),
             "date_to": self.date_to.date().toString("yyyy-MM-dd"),
@@ -2540,7 +2534,7 @@ class MainWindow(QMainWindow):
         elif self.radio_stage1.isChecked():
             mode = "stage1"
         else:
-            mode = "all"
+            mode = "stage1"
 
         # 阶段二模式必须选输入文件
         if mode == "stage2" and not getattr(self, "stage2_input_path", None):

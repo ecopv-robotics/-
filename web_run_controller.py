@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 from utils.workorder_portal import WORKORDER_PORTAL_URL
 
-BUILD = "2026.10.10-r2"
+BUILD = "2026.10.10-r3"
 UPLOAD_LIMIT = 20 * 1024 * 1024
 ROLES = {
     "agent": ("agent_table_path", "agent_emails", "data/agent_emails.xlsx"),

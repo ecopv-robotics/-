@@ -1280,8 +1280,35 @@ class FieldExtractor:
 
         # 发件邮箱未登记时，主题中的代理全称/简称比模糊邮箱更可靠。
         # 例如“巨齿鲨+客户公司+比利时包装法”。
+        # 但发件人域名本身也是强证据：域名指向另一个代理而主题别名指向他人时，
+        # 两条证据冲突（反馈 R22：hflee@bnlsupplies→BNL 被主题里的其他代理名覆盖），
+        # 此时不自动采用任一结果，转人工复核并写明双方证据。
         subject_match = self._extract_agent_from_subject(subject)
         if subject_match:
+            domain_agent = self._agent_from_sender_domain(sender_email)
+            subject_agent = str(subject_match.get("agent") or "").strip()
+            if (
+                domain_agent
+                and subject_agent
+                and normalize_text(domain_agent) != normalize_text(subject_agent)
+            ):
+                self._log(
+                    f"代理证据冲突: 发件域名→{domain_agent}，主题→{subject_agent}，转人工复核",
+                    "warning",
+                )
+                return {
+                    "agent": "",
+                    "match_method": "待确认(代理证据冲突)",
+                    "candidates": subject_match.get("candidates", []),
+                    "conflict": {
+                        "domain_agent": domain_agent,
+                        "subject_agent": subject_agent,
+                        "note": (
+                            f"发件人域名指向 {domain_agent}，主题别名指向 {subject_agent}，"
+                            "请人工确认后再进入工单核对"
+                        ),
+                    },
+                }
             return subject_match
 
         # 也尝试从正文中提取邮箱地址
@@ -1351,6 +1378,35 @@ class FieldExtractor:
             "match_method": "多匹配-人工排查",
             "candidates": candidates,
         }
+
+    # 公共邮箱域名不构成代理证据（同一代理不会用公共邮箱做公司域名）。
+    _PUBLIC_EMAIL_DOMAINS = {
+        "gmail.com", "googlemail.com", "qq.com", "163.com", "126.com", "yeah.net",
+        "outlook.com", "hotmail.com", "live.com", "yahoo.com", "yahoo.co.jp",
+        "icloud.com", "me.com", "sina.com", "sohu.com", "foxmail.com", "aliyun.com",
+    }
+
+    def _agent_from_sender_domain(self, sender_email: str) -> str:
+        """按发件人邮箱域名反查代理表，作为独立强证据。
+
+        只有「同一域名在代理表中唯一指向一个代理」时才返回名称；公共邮箱域名、
+        未登记域名、同域名对应多个代理时一律返回空，不参与冲突判定。
+        """
+        email = str(sender_email or "").strip().lower()
+        if "@" not in email:
+            return ""
+        domain = email.rsplit("@", 1)[1].strip()
+        if not domain or domain in self._PUBLIC_EMAIL_DOMAINS:
+            return ""
+        names: List[str] = []
+        for address, entry in self.agent_email_map.items():
+            other = str(address or "").strip().lower()
+            if "@" not in other or other.rsplit("@", 1)[1].strip() != domain:
+                continue
+            name = self._agent_name_from_entry(entry)
+            if name and normalize_text(name) not in {normalize_text(n) for n in names}:
+                names.append(name)
+        return names[0] if len(names) == 1 else ""
 
     def _email_similarity(self, a: str, b: str) -> int:
         """邮箱地址相似度比较"""
@@ -2166,6 +2222,10 @@ class FieldExtractor:
             r"(?:（个体工商户）|\(个体工商户\))?",
             text,
         )
+        # 先剥离代理前缀，再剥离客户编号：批量清单常见
+        # `出海者 CHZ489 深圳市...有限公司`，编号不在候选开头，
+        # 若先去编号则被代理前缀挡住，编号会残留在公司名里（反馈 R5/R6）。
+        zh = [self._strip_known_agent_prefix(c) for c in zh]
         zh = [self._clean_company_candidate(self._strip_company_prefix_noise(c)[0]) for c in zh]
         zh = [self._strip_known_agent_prefix(c) for c in zh]
         zh = [c for c in zh if _ok(c)]

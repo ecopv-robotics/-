@@ -158,6 +158,26 @@ _TEMPLATE_LABEL_RE = re.compile(
     r"营业执照号码|vat号|德国\s*vat|邮政编码|签字时间)",
     re.I,
 )
+# 品牌/品类候选不允许携带链接或裸域名（反馈 R10：品牌混入亚马逊链接）。
+_URL_NOISE_RE = re.compile(
+    r"https?://\S+"
+    r"|www\.\S+"
+    r"|(?<![\w@.])[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)*\.(?:com|de|cn|net|eu|org|shop|top|site|online)(?:/[^\s,，;；|]*)?",
+    re.I,
+)
+# 无附件邮件的正文常把 EPR 申请表直接粘成 HTML 表格；转文本后每个单元格
+# 可能独占一行，也可能用制表符分列。这里按列名识别「表头块 + 数据块」，
+# 否则“品牌”列的值会因为没有“品牌：X”标签而整列丢失（反馈样例：
+# 凯润-1家公司 德国WEEE 新增类别注册）。
+_TABLE_HEADER_ALIASES = {
+    "brand": ("品牌", "品牌名称", "品牌名", "brand", "brand name", "marke"),
+    "category": (
+        "类别", "品类", "产品类别", "产品品类", "注册类目", "注册类别",
+        "德国weee注册类目", "电池类型", "电池类别", "电池品类", "电池分类",
+        "battery type", "battery category", "batteriekategorie",
+    ),
+    "company": ("公司名称", "公司名", "客户", "客户名称", "company", "customer"),
+}
 
 
 def _text(value: Any) -> str:
@@ -456,6 +476,91 @@ def _category_class_pairs(text: str) -> List[tuple[str, str]]:
     return pairs
 
 
+def _header_role(value: Any) -> str:
+    """判断一个单元格是否为已知表头列名，返回 brand/category/company 或空。"""
+    text = re.sub(r"\s+", "", _text(value)).casefold().strip("*:：")
+    if not text or len(text) > 24:
+        return ""
+    for role, aliases in _TABLE_HEADER_ALIASES.items():
+        for alias in aliases:
+            normalized = re.sub(r"\s+", "", alias).casefold()
+            if text == normalized:
+                return role
+    # 允许“德国WEEE注册类目”这类带前缀的列名，但整格必须是列名短语，
+    # 不能把一句话里出现“品牌”当表头。
+    for role, aliases in _TABLE_HEADER_ALIASES.items():
+        for alias in aliases:
+            normalized = re.sub(r"\s+", "", alias).casefold()
+            if len(normalized) >= 2 and text.endswith(normalized) and len(text) <= len(normalized) + 8:
+                return role
+    return ""
+
+
+def _table_block_pairs(text: str) -> tuple[List[str], List[str]]:
+    """从正文表格中读取品牌列与类别列的值。
+
+    覆盖两种真实形态（均由 HTML 表格转文本产生）：
+      1. 每个单元格独占一行：连续 >=2 行列名，紧接同样数量的值行；
+      2. 同一行用制表符/竖线/连续空格分列：表头行 + 下一行数据行按列对应。
+    值必须是普通单元格内容，不能又是列名，避免把模板表头误当数据。
+    """
+    if not text:
+        return [], []
+    lines = [line.strip() for line in re.split(r"[\r\n]+", _text(text)) if line.strip()]
+    if not lines:
+        return [], []
+    brands: List[str] = []
+    categories: List[str] = []
+
+    def _collect(roles: Sequence[str], values: Sequence[str]) -> None:
+        for role, value in zip(roles, values):
+            cleaned = _clean_candidate(value)
+            if not cleaned:
+                continue
+            if role == "brand":
+                brands.append(cleaned)
+            elif role == "category":
+                categories.append(cleaned)
+
+    # 形态一：逐格换行
+    index = 0
+    total = len(lines)
+    while index < total:
+        roles: List[str] = []
+        cursor = index
+        while cursor < total:
+            role = _header_role(lines[cursor])
+            if not role:
+                break
+            roles.append(role)
+            cursor += 1
+        if len(roles) >= 2 and cursor + len(roles) <= total:
+            values = lines[cursor:cursor + len(roles)]
+            if not any(_header_role(value) for value in values):
+                _collect(roles, values)
+                index = cursor + len(roles)
+                continue
+        index += 1
+
+    # 形态二：同行多列
+    splitter = re.compile(r"\t+|\s*\|\s*|\s{2,}")
+    for line_index, line in enumerate(lines):
+        cells = [cell.strip() for cell in splitter.split(line) if cell.strip()]
+        if len(cells) < 2:
+            continue
+        roles = [_header_role(cell) for cell in cells]
+        if sum(1 for role in roles if role) < 2:
+            continue
+        if line_index + 1 >= len(lines):
+            continue
+        values = [cell.strip() for cell in splitter.split(lines[line_index + 1]) if cell.strip()]
+        if len(values) != len(cells) or any(_header_role(value) for value in values):
+            continue
+        _collect(roles, values)
+
+    return brands, categories
+
+
 def _context_category_values(text: str) -> List[str]:
     """在带有品牌标记的同一行补抓自然语言品类，如“品牌 X 冷却设备”。"""
     if not text:
@@ -478,7 +583,10 @@ def _context_category_values(text: str) -> List[str]:
 def _clean_candidate(value: Any) -> str:
     # 先去除字段分隔符；成对括号属于原始品类描述（例如“光伏面板除外”），
     # 不能像普通标点一样把结尾括号剥掉，否则证据文本会被截断。
-    text = _text(value).strip(" \t:：-—_，,;；")
+    # 品牌/品类候选不允许携带链接或裸域名（反馈 R10：品牌混入亚马逊链接），
+    # 剥离后剩余为空时整个候选作废。
+    text = _URL_NOISE_RE.sub(" ", _text(value))
+    text = _text(text).strip(" \t:：-—_，,;；")
     bracket_pairs = (("(", ")"), ("（", "）"), ("[", "]"), ("【", "】"))
     for opening, closing in bracket_pairs:
         if text.endswith(closing) and text.count(opening) < text.count(closing):
@@ -862,13 +970,18 @@ def extract_weee_items(
         return result
 
     # 邮件里既有“品牌：X/品类：Y”，也常见“新增品牌X 第六类”这种没有冒号的写法。
+    # 正文表格（表头列 + 数据行）另算一路证据，且用**原始正文**：按公司名裁剪
+    # 后的文本已丢掉不含公司名的表头行，品牌列会整列丢失。
+    table_brands, table_categories = _table_block_pairs(_text(body))
     brand_pairs = unique_pairs(
         _label_value_pairs(mail_text, _BRAND_KEYS)
         + _inline_marker_pairs(mail_text, _INLINE_BRAND_MARKERS)
+        + [("表格品牌列", value) for value in table_brands]
     )
     category_pairs = unique_pairs(
         _label_value_pairs(mail_text, _CATEGORY_KEYS)
         + _inline_marker_pairs(mail_text, _INLINE_CATEGORY_MARKERS)
+        + [("表格类别列", value) for value in table_categories]
     )
     # 没有显式“类别/品类”标签时，保留“第 1 类/第六类”作为原始品类证据。
     if not category_pairs:

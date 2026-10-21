@@ -229,3 +229,60 @@ def test_decode_replacement_character_forces_manual_review():
     assert rows
     assert all(row["置信度"] == "需人工确认" for row in rows)
     assert all(row["邮件解码状态"] == "检测到解码替代字符" for row in rows)
+
+
+def test_company_candidate_after_agent_prefix_drops_client_code():
+    """R5/R6：代理前缀在客户编号之前时，编号也必须被剥离。
+
+    截图实例：代理「出海者」+ 编号 CHZ489 + 公司全名，最终只输出公司全名。
+    """
+    extractor = FieldExtractor({"agent@example.invalid": {"代理": "出海者"}}, [])
+    assert extractor._company_substring("出海者 CHZ489 深圳市聚恒希科技有限公司") == "深圳市聚恒希科技有限公司"
+    result = extractor._sanitize_customer_result(
+        {"customer": "出海者 CHZ489 深圳市聚恒希科技有限公司", "source": "规则"}
+    )
+    assert result["customer"] == "深圳市聚恒希科技有限公司"
+
+
+def test_company_candidate_without_agent_prefix_still_drops_client_code():
+    """无代理前缀的直接形态仍保持原有剥离行为。"""
+    extractor = FieldExtractor({}, [])
+    assert extractor._company_substring("CHZ489 深圳市聚恒希科技有限公司") == "深圳市聚恒希科技有限公司"
+
+
+# 发件人 hflee@bnlsupplies.example 本身未登记，只有同域名的其他邮箱登记为 BNL，
+# 与生产现象一致：发件邮箱走了主题别名匹配，域名证据被忽略。
+_AGENT_MAP = {
+    "sales@bnlsupplies.example": {"代理": "BNL"},
+    "ops@yisi.example": {"代理": "易思"},
+}
+
+
+def test_agent_domain_and_subject_conflict_goes_to_manual_review():
+    """R22：发件域名→BNL、主题别名→易思，两条证据冲突时不得自动改判。"""
+    extractor = FieldExtractor(_AGENT_MAP, [])
+    result = extractor._extract_agent(
+        "hflee@bnlsupplies.example", "易思 挪威WEEE 注册", "正文", []
+    )
+    assert result["agent"] == ""
+    assert "待确认" in result["match_method"]
+    assert "冲突" in result["match_method"]
+    assert result["conflict"]["domain_agent"] == "BNL"
+    assert result["conflict"]["subject_agent"] == "易思"
+
+
+def test_agent_domain_and_subject_agreeing_is_accepted():
+    extractor = FieldExtractor(_AGENT_MAP, [])
+    result = extractor._extract_agent(
+        "hflee@bnlsupplies.example", "BNL 挪威WEEE 注册", "正文", []
+    )
+    assert result["agent"] == "BNL"
+
+
+def test_agent_subject_match_still_used_without_domain_evidence():
+    """发件域名不在代理表内时，主题别名匹配保持原有行为。"""
+    extractor = FieldExtractor(_AGENT_MAP, [])
+    result = extractor._extract_agent(
+        "someone@unknown.example", "易思 挪威WEEE 注册", "正文", []
+    )
+    assert result["agent"] == "易思"

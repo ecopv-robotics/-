@@ -288,3 +288,61 @@ def test_scoped_llm_reextract_cannot_restore_other_company_rows():
     assert [(item["brand"], item["category_class"]) for item in result["items"]] == [
         ("BrandA", "5")
     ]
+
+
+def test_weee_brand_candidate_strips_link_noise():
+    """R10：品牌候选混入链接时剥离链接、保留品牌部分。"""
+    result = extract_weee_items(
+        "上海古道-示例62f251e9有限公司-新增类目：电气与电子设备废料-大型设备(光伏面板除外)",
+        "新增类目：电气与电子设备废料-大型设备(光伏面板除外)\n品牌：SexYln https://www.amazon.de/dp/B0G2BYTMKN",
+        [],
+        "德国WEEE",
+    )
+    assert result["status"] == "ready"
+    assert result["items"][0]["brand"] == "SexYln"
+
+
+def test_weee_brand_candidate_strips_link_noise():
+    """R10：品牌候选混入链接时剥离链接、保留品牌部分。"""
+    result = extract_weee_items(
+        "上海古道-示例62f251e9有限公司-新增类目：电气与电子设备废料-大型设备(光伏面板除外)",
+        "新增类目：电气与电子设备废料-大型设备(光伏面板除外)\n品牌：SexYln https://www.amazon.de/dp/B0G2BYTMKN",
+        [],
+        "德国WEEE",
+    )
+    assert result["status"] == "ready"
+    assert result["items"][0]["brand"] == "SexYln"
+
+
+def test_weee_body_table_cells_on_separate_lines_are_parsed():
+    """无附件邮件：HTML 表格转文本后每格一行，品牌要按表头列对应读出。
+
+    真实形态来自业务截图（凯润-1家公司 德国WEEE 新增类别注册）：
+    表头「公司名称 / 德国WEEE注册类目 / 品牌」各占一行，值各占一行。
+    """
+    subject = "示例代理-1家公司 德国WEEE 新增类别注册"
+    body = "\n".join([
+        "公司名称",
+        "德国WEEE注册类目",
+        "品牌",
+        "武汉示例网络科技有限公司",
+        "第5类：小型设备（光伏面板除外）",
+        "Hethlif",
+        "示例代理-武汉示例网络科技有限公司 德国WEEE 新增类别注册，请尽快处理，谢谢",
+    ])
+    result = extract_weee_items(subject, body, [], "德国WEEE", company="武汉示例网络科技有限公司")
+    assert result["status"] == "ready"
+    assert result["items"][0]["brand"] == "Hethlif"
+    assert result["items"][0]["category_class"] == "5"
+
+
+def test_weee_body_table_tab_separated_are_parsed():
+    """同一行用制表符分列的正文表格也要能读出品牌。"""
+    subject = "示例代理-1家公司 德国WEEE 新增类别注册"
+    body = ("公司名称\t德国WEEE注册类目\t品牌\n"
+            "武汉示例网络科技有限公司\t第5类：小型设备（光伏面板除外）\tHethlif\n"
+            "示例代理-武汉示例网络科技有限公司 德国WEEE 新增类别注册，请尽快处理")
+    result = extract_weee_items(subject, body, [], "德国WEEE", company="武汉示例网络科技有限公司")
+    assert result["status"] == "ready"
+    assert result["items"][0]["brand"] == "Hethlif"
+    assert result["items"][0]["category_class"] == "5"

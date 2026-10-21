@@ -245,3 +245,123 @@ def test_battery_export_retains_independent_manual_fields(tmp_path, monkeypatch)
     assert row["标准化项目名称"] == "德国电池法"
     assert json.loads(row["德国电池法品类明细"])[0]["category_class"] == "Manual battery class"
     workbook.close()
+
+
+def test_battery_brand_candidate_strips_amazon_link():
+    """R10：品牌候选混入亚马逊链接时，剥离链接、保留品牌部分。"""
+    result = extract_battery_items(
+        subject="示例-德国电池法注册",
+        body="",
+        attachments=[{
+            "filename": "battery_list.xlsx",
+            "structured_records": [{
+                "record_type": "battery_section",
+                "brand": "SexYln https://www.amazon.de/dp/B0G2BYTMKN",
+                "category": "设备电池",
+            }],
+        }],
+        project="德国电池法",
+    )
+    assert result["enabled"] is True
+    brands = [item["brand"] for item in result["items"] if item["brand"]]
+    assert "SexYln" in brands
+    assert not any("http" in brand or "amazon" in brand for brand in brands)
+
+
+def test_battery_brand_candidate_pure_link_is_dropped():
+    """品牌候选只有链接时直接作废，不产生空壳品牌项。"""
+    result = extract_battery_items(
+        subject="示例-德国电池法注册",
+        body="",
+        attachments=[{
+            "filename": "battery_list.xlsx",
+            "structured_records": [{
+                "record_type": "battery_section",
+                "brand": "https://www.amazon.de/dp/B0G2BYTMKN",
+                "category": "设备电池",
+            }],
+        }],
+        project="德国电池法",
+    )
+    assert result["enabled"] is True
+    assert all("amazon" not in (item["brand"] or "") for item in result["items"])
+
+
+def test_battery_brand_candidate_strips_amazon_link():
+    """R10：品牌候选混入亚马逊链接时，剥离链接、保留品牌部分。"""
+    result = extract_battery_items(
+        subject="示例-德国电池法注册",
+        body="",
+        attachments=[{
+            "filename": "battery_list.xlsx",
+            "structured_records": [{
+                "record_type": "battery_section",
+                "brand": "SexYln https://www.amazon.de/dp/B0G2BYTMKN",
+                "category": "设备电池",
+            }],
+        }],
+        project="德国电池法",
+    )
+    assert result["enabled"] is True
+    brands = [item["brand"] for item in result["items"] if item["brand"]]
+    assert "SexYln" in brands
+    assert not any("http" in brand or "amazon" in brand for brand in brands)
+
+
+def test_battery_brand_candidate_pure_link_is_dropped():
+    """品牌候选只有链接时直接作废，不产生空壳品牌项。"""
+    result = extract_battery_items(
+        subject="示例-德国电池法注册",
+        body="",
+        attachments=[{
+            "filename": "battery_list.xlsx",
+            "structured_records": [{
+                "record_type": "battery_section",
+                "brand": "https://www.amazon.de/dp/B0G2BYTMKN",
+                "category": "设备电池",
+            }],
+        }],
+        project="德国电池法",
+    )
+    assert result["enabled"] is True
+    assert all("amazon" not in (item["brand"] or "") for item in result["items"])
+
+
+def test_battery_body_table_cells_on_separate_lines_are_parsed():
+    """无附件邮件：正文表格（表头列 + 数据行）也要读出品牌与电池类型。"""
+    from modules.mail_reader import _html_to_text
+    html = ("<table><tr><td>公司名称</td><td>电池类型</td><td>品牌</td></tr>"
+            "<tr><td>武汉示例网络科技有限公司</td><td>设备电池</td><td>Hethlif</td></tr></table>"
+            "<p>示例代理-武汉示例网络科技有限公司 德国电池法 新增注册</p>")
+    result = extract_battery_items(
+        subject="示例代理-1家公司 德国电池法 新增注册",
+        body=_html_to_text(html),
+        attachments=[],
+        project="德国电池法",
+        company="武汉示例网络科技有限公司",
+    )
+    brands = [item["brand"] for item in result["items"] if item["brand"]]
+    classes = [item["category_class"] for item in result["items"] if item["category_class"]]
+    assert "Hethlif" in brands
+    assert "设备电池" in classes
+    assert result["status"] == "pending"
+
+
+def test_battery_body_table_cells_on_separate_lines_are_parsed():
+    """无附件邮件：正文表格（表头列 + 数据行）也要读出品牌与电池类型。"""
+    from modules.mail_reader import _html_to_text
+    html = ("<table><tr><td>公司名称</td><td>电池类型</td><td>品牌</td></tr>"
+            "<tr><td>武汉示例网络科技有限公司</td><td>设备电池</td><td>Hethlif</td></tr></table>"
+            "<p>示例代理-武汉示例网络科技有限公司 德国电池法 新增注册</p>")
+    result = extract_battery_items(
+        subject="示例代理-1家公司 德国电池法 新增注册",
+        body=_html_to_text(html),
+        attachments=[],
+        project="德国电池法",
+        company="武汉示例网络科技有限公司",
+    )
+    brands = [item["brand"] for item in result["items"] if item["brand"]]
+    classes = [item["category_class"] for item in result["items"] if item["category_class"]]
+    assert "Hethlif" in brands
+    assert "设备电池" in classes
+    assert result["status"] == "pending"

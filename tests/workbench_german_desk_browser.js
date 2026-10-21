@@ -136,6 +136,19 @@ async page => {
   check(requests.slice(beforeTop).some(r=>r.body?.action==='bulk_confirm'&&(r.body.mail_ids||[])[0]==='BATTERY'),'德国邮件「整理完成」发出整封确认 bulk_confirm');
   await select('inbox','READY');
   check(await ids()==='BATTERY,DONE,MIXED,READY,REVIEW,WEEE','整封确认后邮件仍保存在数据中（合并后「全部」含已完成）');
+  // 反馈 R12：同一公司在德国 WEEE/电池法卡片内可以直接新增项目，
+  // 复用「新增业务」弹窗并预填公司/代理，项目与国家留空由人工选择。
+  await page.evaluate(()=>{app.view='weee';app.filter='all';app.mailId='BATTERY';app.detailId='B1';render()});
+  await page.waitForTimeout(200);
+  const addProjectButton=page.locator('[data-add-detail-project="B1"]');
+  check(await addProjectButton.count()===1,'德国电池法卡片内有「＋新增项目」按钮');
+  await addProjectButton.click();
+  await page.waitForTimeout(200);
+  check(await page.locator('#modal-title').textContent()==='新增业务','点击后打开「新增业务」弹窗');
+  check(await page.locator('#f-company').inputValue()!=='','新增项目预填公司');
+  check(await page.locator('#f-program').inputValue()==='','新增项目时项目留空供人工选择');
+  await page.locator('#modal-cancel').click();
+  await page.waitForTimeout(150);
   check(errors.length===0,'页面无脚本异常 '+JSON.stringify(errors));
   return {passed:checks.length,checks,productionWrites:0};
 }

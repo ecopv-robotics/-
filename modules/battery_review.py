@@ -10,6 +10,24 @@ _WEEE_CONTEXT = re.compile(r"WEEE|ElektroG|电子电气", re.I)
 _BRAND_LABEL = re.compile(r"(?:新增品牌|品牌名称|品牌名|品牌|brand(?:\s+name)?|marke)\s*[:：]?\s*([^,，;；|\n\r+＋]{1,90})", re.I)
 _TYPE_LABEL = re.compile(r"(?:电池(?:类型|类别|品类|分类)|原始品类|注册类别|battery\s*(?:type|category)|batteriekategorie)\s*[:：]?\s*([^,，;；|\n\r+＋]{1,90})", re.I)
 _PLACEHOLDER = re.compile(r"^(?:品牌|品牌名称|电池类型|电池类别|示例|例如|例|待填写|请选择|必填|选填|brand|category|type)(?:\s*[:：].*)?$", re.I)
+# 品牌/品类候选不允许携带链接或裸域名（反馈 R10：品牌混入亚马逊链接）。
+_URL_NOISE_RE = re.compile(
+    r"https?://\S+"
+    r"|www\.\S+"
+    r"|(?<![\w@.])[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)*\.(?:com|de|cn|net|eu|org|shop|top|site|online)(?:/[^\s,，;；|]*)?",
+    re.I,
+)
+
+
+def _strip_url_noise(value):
+    """剥离品牌/品类候选中的链接与裸域名，剩余部分交给 _clean。"""
+    text = _URL_NOISE_RE.sub(" ", str(value or ""))
+    return re.sub(r"\s{2,}", " ", text).strip(" \t:：,，;；|+＋-—_")
+
+
+def _clean_field_value(value):
+    """品牌/品类专用清洗：先剥链接噪声，再做通用清洗。"""
+    return _clean(_strip_url_noise(value))
 _CLASS_PATTERNS = (
     ("汽车电池", re.compile(r"电动汽车电池|电动车(?:辆)?电池|电动汽车动力电池|Elektrofahrzeugbatterie|(?:Anlage[\s_-]*)?FZG|electric vehicle batter", re.I)),
     ("轻型交通工具电池", re.compile(r"轻型交通工具电池|轻型交通电池|轻型车辆电池|LV[-\s]?Batter|Leichte\s+Verkehrsmittel|light means of transport batter|(?:Anlage[\s_-]*)?LV(?:[-_.\s]|$)", re.I)),
@@ -133,14 +151,32 @@ def extract_battery_items(subject="", body="", attachments=None, project="", com
                 continue
             if not _BATTERY_CONTEXT.search(context):
                 continue
-            brand = _clean(record.get("brand"))
-            category = _clean(record.get("category"))
+            brand = _clean_field_value(record.get("brand"))
+            category = _clean_field_value(record.get("category"))
             if not (brand or category):
                 continue
             source = f"附件表格：{record_filename} / {_clean(record.get('sheet_name')) or '工作表'} 第{record.get('row_number') or '?'}行"
             items.append({"brand": brand, "category": category, "category_class": classify_battery_category(category),
                           "source": source, "evidence": _clean(record.get("raw_text")) or " | ".join(map(str, record.get("cells") or [])),
                           "confidence": "high" if category else "medium"})
+
+    # 无附件邮件的正文常把申请表粘成表格：转文本后每个单元格一行，
+    # 或同一行用制表符分列。此时“品牌”“电池类型”只是表头列名，值在下一行
+    # 同一列，普通“品牌：X”标签匹配读不到，品牌会整列丢失。
+    from modules.weee_category_audit import _table_block_pairs
+    table_brands, table_categories = _table_block_pairs(str(body or ""))
+    if table_brands or table_categories:
+        pair_count = max(len(table_brands), len(table_categories))
+        for index in range(pair_count):
+            brand = table_brands[index] if index < len(table_brands) else ""
+            category = table_categories[index] if index < len(table_categories) else ""
+            if not (brand or category):
+                continue
+            items.append({"brand": brand, "category": category,
+                          "category_class": classify_battery_category(category),
+                          "source": "邮件正文表格",
+                          "evidence": f"表格品牌列：{brand}；表格类别列：{category}",
+                          "confidence": "medium"})
 
     # Only battery-specific lines can contribute mail fields in a mixed WEEE mail.
     lines = [line.strip() for line in re.split(r"[\r\n]+", str(subject or "") + "\n" + str(body or "")) if line.strip()]
@@ -149,8 +185,8 @@ def extract_battery_items(subject="", body="", attachments=None, project="", com
             continue
         if not _BATTERY_CONTEXT.search(line) or (_WEEE_CONTEXT.search(line) and not classify_battery_category(line)):
             continue
-        brands = [_clean(match.group(1)) for match in _BRAND_LABEL.finditer(line)]
-        categories = [_clean(match.group(1)) for match in _TYPE_LABEL.finditer(line)]
+        brands = [_clean_field_value(match.group(1)) for match in _BRAND_LABEL.finditer(line)]
+        categories = [_clean_field_value(match.group(1)) for match in _TYPE_LABEL.finditer(line)]
         brands = [value for value in brands if value]
         categories = [value for value in categories if value]
         if not categories:

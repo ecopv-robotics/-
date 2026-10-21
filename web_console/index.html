@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="ecopv-workbench-build" content="2026.10.10-r2">
-<title>邮件审核 · 运行控制台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/run/console.css?v=20261010-r2"><script src="/run/console.js?v=20261010-r2" defer></script><style>.badge.partial{background:#fff3db;color:#946200}</style></head>
-<body><script>if(location.pathname==='/run/embed')document.documentElement.classList.add('embedded')</script><header class="top"><a class="brand" href="/?view=run">邮件审核工作台</a><nav><a class="active" href="/?view=run" aria-current="page">运行控制台</a><a href="/?view=inbox">人工复核</a></nav><span class="version">本机运行 · <span id="build">2026.10.10-r2</span></span></header>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="ecopv-workbench-build" content="2026.10.10-r3">
+<title>邮件审核 · 运行控制台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/run/console.css?v=20261010-r3"><script src="/run/console.js?v=20261010-r3" defer></script><style>.badge.partial{background:#fff3db;color:#946200}</style></head>
+<body><script>if(location.pathname==='/run/embed')document.documentElement.classList.add('embedded')</script><header class="top"><a class="brand" href="/?view=run">邮件审核工作台</a><nav><a class="active" href="/?view=run" aria-current="page">运行控制台</a><a href="/?view=inbox">人工复核</a></nav><span class="version">本机运行 · <span id="build">2026.10.10-r3</span></span></header>
 <main><div class="heading"><div><h1>运行控制台</h1><p>选择日期读取邮件，核对提取结果，再查询工单。</p></div><a class="button" href="/?view=inbox" target="_top">进入人工复核</a></div><div id="notice" role="status" hidden></div>
 <div class="layout"><section class="panel controls"><h2>运行设置</h2><form id="run-form"><fieldset id="run-fields" disabled>
-<label for="mode">运行方式</label><select id="mode"><option value="stage1">阶段一 · 邮件解析</option><option value="stage2">阶段二 · 工单核对</option><option value="all">一站式 · 解析后继续查询（原流程）</option></select><p class="hint" id="mode-help">仅处理所选日期范围内的邮件；不会扫描全部邮件。</p>
+<label for="mode">运行方式</label><select id="mode"><option value="stage1">阶段一 · 邮件解析</option><option value="stage2">阶段二 · 工单核对</option></select><p class="hint" id="mode-help">仅处理所选日期范围内的邮件；不会扫描全部邮件。</p>
 <div id="dates" class="columns"><div><label for="date-from">开始日期</label><input id="date-from" type="date" required></div><div><label for="date-to">结束日期（含当天）</label><input id="date-to" type="date" required></div></div>
 <div id="stage1-inputs"><h3>阶段一参考表</h3><p class="hint">自动沿用已有文件，也可以重新导入。原始文件不会被覆盖。</p>
 <div class="file-row"><div><b>代理邮箱表</b><span id="file-agent">正在读取…</span></div><label class="button upload">导入<input type="file" data-role="agent" accept=".xlsx" aria-label="导入代理邮箱表"></label></div>

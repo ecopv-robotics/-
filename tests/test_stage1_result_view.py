@@ -136,3 +136,46 @@ def test_stage2_actual_result_still_uses_same_schema_and_success_gate(tmp_path):
         "stage1_pending",
     )[0]
     assert missing_values[5:7] == ["无", "无"]
+
+
+def _battery_items_row(items):
+    return {
+        "国家": "德国",
+        "项目": "德国电池法",
+        "需求": "注册",
+        "客户": "Fixture Battery GmbH",
+        "代理": "华之星",
+        "德国电池法品类明细": json.dumps(items, ensure_ascii=False),
+    }
+
+
+def test_german_battery_two_brands_export_two_rows():
+    """R20：确认两个品牌必须出两条结果行，而不是合并成一个品牌单元格。"""
+    writer = ExcelWriter(output_dir="output_test")
+    values = writer._workorder_export_values(_battery_items_row([
+        {"brand": "Lerkely", "category": "设备电池", "category_class": "设备电池"},
+        {"brand": "Lonnalee", "category": "设备电池", "category_class": "设备电池"},
+    ]), "stage1_pending")
+
+    assert len(values) == 2
+    assert [row[5] for row in values] == ["Lerkely", "Lonnalee"]
+
+
+def test_german_battery_brand_and_category_pairing_keeps_row_order():
+    """逐行展开时品牌与分类必须来自同一 item，不能跨行拼接。"""
+    writer = ExcelWriter(output_dir="output_test")
+    values = writer._workorder_export_values(_battery_items_row([
+        {"brand": "BrandA", "category": "汽车启动电池", "category_class": "启动电池"},
+        {"brand": "BrandB", "category": "工业电池", "category_class": "工业电池"},
+    ]), "stage1_pending")
+
+    assert len(values) == 2
+    assert (values[0][5], values[0][6]) == ("BrandA", "启动电池")
+    assert (values[1][5], values[1][6]) == ("BrandB", "工业电池")
+
+
+def test_german_battery_without_items_keeps_single_row():
+    writer = ExcelWriter(output_dir="output_test")
+    values = writer._workorder_export_values(_battery_items_row([]), "stage1_pending")
+    assert len(values) == 1
+    assert values[0][5] == "无" and values[0][6] == "无"
