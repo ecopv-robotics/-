@@ -125,6 +125,9 @@ XLSX_HEADER_ALIASES = {
         "商品類別", "产品分类", "產品分類", "设备类别", "設備類別", "注册类别",
         "注册品类", "申报品类", "申報品類", "category", "product category",
         "product type", "warengruppe", "produktkategorie",
+        # 德国电池法申请表用「电池类型/电池类别」作为品类列，与 WEEE 的
+        # 「产品类别」并列出现在同一张表的电池区块表头里。
+        "电池类型", "电池类别", "电池品类", "电池分类", "batterietyp",
     ),
 }
 
@@ -610,7 +613,7 @@ _XLSX_FORM_HEADER_HINTS = (
     "companyregistrationinformation", "registrationcompanyinformation",
     "contactinformation", "legalrepresentativeinformation",
     "registrationcapital", "poasigning", "placeofsignature", "signingtime",
-    "服务内容", "服务的国家", "预估销售量", "预计销售量",
+    "服务内容", "服务的国家",
     "资料列表", "文件示例", "适用国家/业务", "注意事项",
 )
 
@@ -698,13 +701,16 @@ def _xlsx_structured_records(rows: List[List[str]], sheet_name: str) -> List[Dic
     只接受至少含客户/编号一类实体列的表头，且数据行必须带客户名或
     “编号 + 服务字段”。这样不会把 EPR 模板的国家×业务网格或说明页当成
     真实业务记录；真正的表格行则带 row_number，可回到原附件核对。
+
+    真实申请表会把 WEEE / 电池 / 包装 / 一次性塑料等多个区块纵向堆叠在
+    同一张 sheet 里，每个区块都有自己的表头。旧逻辑只认第一个表头并读到
+    表尾，既读不到后续区块的品牌，又会把后续区块的表头当成数据；这里改为
+    逐区块解析：每个表头只管到下一个表头或区块标题为止。
     """
     if not rows:
         return []
 
-    header_index = -1
-    role_columns: Dict[str, List[int]] = {}
-    weee_catalog_header = False
+    headers: List[tuple] = []
     for index, row in enumerate(rows[:60]):
         row_text = re.sub(r"\s+", "", " ".join(_xlsx_cell_text(cell) for cell in row)).lower()
         if any(hint in row_text for hint in _XLSX_FORM_HEADER_HINTS):
@@ -725,7 +731,7 @@ def _xlsx_structured_records(rows: List[List[str]], sheet_name: str) -> List[Dic
         )
         has_customer_and_service = has_customer and has_service
         has_code_and_service = bool(candidate.get("customer_code")) and has_service
-        # 德国 WEEE 附件常单独列出“品牌 | 类别”，这不是一行一个客户，
+        # 德国 WEEE / 电池法附件常单独列出“品牌 | 类别”，这不是一行一个客户，
         # 但必须保留为专项证据供后续与注册工单的“品类明细”比对。
         has_weee_catalog = bool(candidate.get("brand")) and bool(candidate.get("category"))
         # 有些“注册表”是阶段一内部导出格式：项目列不在附件内，
@@ -735,94 +741,102 @@ def _xlsx_structured_records(rows: List[List[str]], sheet_name: str) -> List[Dic
             has_customer and bool(candidate.get("customer_code"))
             and bool(candidate.get("agent"))
         )
-        if has_customer_and_service or has_code_and_service or has_entity_export or has_weee_catalog:
-            header_index = index
-            role_columns = candidate
-            # 代理的德国 WEEE 申请表不是“品牌|类别”横向清单，而是
-            # WEEE 区块的表头下一行填写值，后面还会继续出现电池/包装
-            # 区块。记录这个边界，避免把后续区块的字段说明误当成品牌。
-            weee_catalog_header = any(
-                re.search(r"(?<![A-Za-z])WEEE(?![A-Za-z])", _xlsx_cell_text(cell), re.I)
-                for cell in row
-            )
-            # 同一张内部导出表经常同时保留“公司英文名”和“公司中文名”。
-            # 中文法定名称更适合工作台和工单显示；若中文列为空，再回退到英文列。
-            def customer_priority(column: int) -> tuple:
-                header = _xlsx_cell_text(row[column]).lower() if column < len(row) else ""
-                if "中文" in header or "chinese" in header:
-                    return (0, column)
-                if "英文" in header or "english" in header:
-                    return (2, column)
-                return (1, column)
+        if not (has_customer_and_service or has_code_and_service
+                or has_entity_export or has_weee_catalog):
+            continue
+        # 代理的德国 WEEE 申请表不是“品牌|类别”横向清单，而是
+        # WEEE 区块的表头下一行填写值，后面还会继续出现电池/包装
+        # 区块。记录这个边界，避免把后续区块的字段说明误当成品牌。
+        is_weee_catalog = any(
+            re.search(r"(?<![A-Za-z])WEEE(?![A-Za-z])", _xlsx_cell_text(cell), re.I)
+            for cell in row
+        )
+        # 同一张内部导出表经常同时保留“公司英文名”和“公司中文名”。
+        # 中文法定名称更适合工作台和工单显示；若中文列为空，再回退到英文列。
+        def customer_priority(column: int, header_row: List[str] = row) -> tuple:
+            header = _xlsx_cell_text(header_row[column]).lower() if column < len(header_row) else ""
+            if "中文" in header or "chinese" in header:
+                return (0, column)
+            if "英文" in header or "english" in header:
+                return (2, column)
+            return (1, column)
 
-            role_columns["customer"] = sorted(
-                role_columns.get("customer", []), key=customer_priority
-            )
-            role_columns["brand"] = _xlsx_preferred_role_columns(
-                row, role_columns.get("brand", []), "brand"
-            )
-            break
-    if header_index < 0:
+        candidate["customer"] = sorted(candidate.get("customer", []), key=customer_priority)
+        candidate["brand"] = _xlsx_preferred_role_columns(row, candidate.get("brand", []), "brand")
+        headers.append((index, candidate, is_weee_catalog))
+
+    if not headers:
         return []
 
+    # 区块标题行（如“电池法信息填写（例：设备电池…）”）标志当前区块结束，
+    # 即使下一个表头还没出现；否则上一区块会把这段说明当数据行。
+    section_title = re.compile(
+        r"(?:信息在下列填写|产品信息|信息填写|下列填写|填写（例)", re.I
+    )
+
     records: List[Dict] = []
-    blank_streak = 0
-    for index, row in enumerate(rows[header_index + 1:], start=header_index + 2):
-        values = [_xlsx_cell_text(cell) for cell in row]
-        if not any(values):
-            blank_streak += 1
-            if weee_catalog_header and records:
-                # WEEE 区块的空行就是该区块结束；后面的“电池/包装”
-                # 表头仍可能包含“类别/品牌”字样，但不属于 WEEE。
+    for position, (header_index, role_columns, weee_catalog_header) in enumerate(headers):
+        stop = headers[position + 1][0] if position + 1 < len(headers) else len(rows)
+        for index in range(header_index + 1, min(stop, len(rows))):
+            row = rows[index]
+            values = [_xlsx_cell_text(cell) for cell in row]
+            if not any(values):
+                continue
+            if records and section_title.search(" ".join(values)):
                 break
-            if records and blank_streak >= 5:
-                break
-            continue
-        blank_streak = 0
 
-        # 重复表头、合计和说明行都不是一条业务记录。
-        first_values = " ".join(values).strip()
-        if all(_xlsx_header_role(value) for value in values if value):
-            continue
-        if re.search(r"^(合计|总计|小计|备注|说明)(?:\s|：|:|$)", first_values):
-            continue
+            # 重复表头、合计和说明行都不是一条业务记录。
+            first_values = " ".join(values).strip()
+            if all(_xlsx_header_role(value) for value in values if value):
+                continue
+            if re.search(r"^(合计|总计|小计|备注|说明)(?:\s|：|:|$)", first_values):
+                continue
 
-        def values_for(role: str) -> List[str]:
-            return [values[col] for col in role_columns.get(role, []) if col < len(values) and values[col]]
+            def values_for(role: str, row_values: List[str] = values) -> List[str]:
+                return [
+                    row_values[col] for col in role_columns.get(role, [])
+                    if col < len(row_values) and row_values[col]
+                ]
 
-        customers = values_for("customer")
-        codes = values_for("customer_code")
-        agents = values_for("agent")
-        projects = values_for("project")
-        countries = values_for("country")
-        businesses = values_for("business")
-        requests = values_for("request")
-        brands = values_for("brand")
-        categories = values_for("category")
-        # 只有明确的客户主体才进入 customer；EPR 申请表的“法人/注册资本/
-        # 签字时间”等标签即使落在同一列，也不能成为客户记录。
-        customer = next((clean for value in customers if (clean := _xlsx_customer_value(value))), "")
-        # 只有序号不构成记录；编号列存在时也必须搭配至少一个业务字段。
-        has_entity = bool(customer) or bool(codes and (projects or countries or businesses or requests)) or bool(brands and categories)
-        if not has_entity:
-            continue
+            customers = values_for("customer")
+            codes = values_for("customer_code")
+            agents = values_for("agent")
+            projects = values_for("project")
+            countries = values_for("country")
+            businesses = values_for("business")
+            requests = values_for("request")
+            brands = values_for("brand")
+            categories = values_for("category")
+            # 只有明确的客户主体才进入 customer；EPR 申请表的“法人/注册资本/
+            # 签字时间”等标签即使落在同一列，也不能成为客户记录。
+            customer = next(
+                (clean for value in customers if (clean := _xlsx_customer_value(value))), ""
+            )
+            # 只有序号不构成记录；编号列存在时也必须搭配至少一个业务字段。
+            has_entity = (
+                bool(customer)
+                or bool(codes and (projects or countries or businesses or requests))
+                or bool(brands and categories)
+            )
+            if not has_entity:
+                continue
 
-        records.append({
-            "sheet_name": sheet_name,
-            "row_number": index,
-            "cells": values[:24],
-            "customer": customer,
-            "customer_code": codes[0] if codes else "",
-            "agent": agents[0] if agents else "",
-            "project": " ".join(projects),
-            "country": " ".join(countries),
-            "business": " ".join(businesses),
-            "request": " ".join(requests),
-            "brand": " ".join(brands),
-            "category": " ".join(categories),
-            "record_type": "weee_catalog" if (not customer and brands and categories) else "entity",
-            "raw_text": " | ".join(value for value in values if value),
-        })
+            records.append({
+                "sheet_name": sheet_name,
+                "row_number": index + 1,
+                "cells": values[:24],
+                "customer": customer,
+                "customer_code": codes[0] if codes else "",
+                "agent": agents[0] if agents else "",
+                "project": " ".join(projects),
+                "country": " ".join(countries),
+                "business": " ".join(businesses),
+                "request": " ".join(requests),
+                "brand": " ".join(brands),
+                "category": " ".join(categories),
+                "record_type": "weee_catalog" if (not customer and brands and categories) else "entity",
+                "raw_text": " | ".join(value for value in values if value),
+            })
     return records
 
 

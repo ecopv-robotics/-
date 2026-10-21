@@ -146,17 +146,37 @@ def extract_battery_items(subject="", body="", attachments=None, project="", com
             record_filename = _clean(record.get("attachment_name")) or filename
             if record.get("record_type") != "battery_section" and not _company_matches(record, company, record_filename):
                 continue
-            context = " ".join(str(record.get(key) or "") for key in ("project", "business", "sheet_name", "record_type")) + " " + record_filename
-            if _WEEE_CONTEXT.search(context) and not _BATTERY_CONTEXT.search(context):
-                continue
-            if not _BATTERY_CONTEXT.search(context):
-                continue
             brand = _clean_field_value(record.get("brand"))
             category = _clean_field_value(record.get("category"))
+            context = " ".join(str(record.get(key) or "") for key in ("project", "business", "sheet_name", "record_type")) + " " + record_filename
+            # 申请表的电池区块常被解析成通用目录记录（如 record_type=weee_catalog、
+            # sheet=Sheet1），上下文里根本没有“电池”字样，旧逻辑会整条丢弃，
+            # 即使品牌已经解析出来（反馈：品牌普遍提不出来）。业务本身是德国
+            # 电池法时，带品牌的目录记录就是电池证据；类别无法归入五类则留空，
+            # 由人工在五选一下拉里确认。
+            recognized_class = classify_battery_category(category) or classify_battery_category(brand)
+            # “锂电池/储能电池”这类写法也能归进 WEEE 的设备类别，但字面已经
+            # 写明是电池，应优先按电池证据处理，不能再被 WEEE 上下文挡掉。
+            literal_battery = bool(re.search(r"电池|batter", f"{category} {brand}", re.I))
+            if not recognized_class and not literal_battery:
+                weee_like = False
+                if category:
+                    from modules.weee_category_audit import classify_weee_product
+                    weee_like = bool(classify_weee_product(category).get("category_class"))
+                if weee_like:
+                    continue
+                if _WEEE_CONTEXT.search(context) and not _BATTERY_CONTEXT.search(context):
+                    continue
+                # 进入本函数时 project 已确认是德国电池法，因此“品牌 + 类别”齐全、
+                # 且类别不属于 WEEE 的表格行本身就是电池证据；分类留空由人工
+                # 五选一确认。
+                if not _BATTERY_CONTEXT.search(context) and not (brand and category):
+                    continue
             if not (brand or category):
                 continue
             source = f"附件表格：{record_filename} / {_clean(record.get('sheet_name')) or '工作表'} 第{record.get('row_number') or '?'}行"
-            items.append({"brand": brand, "category": category, "category_class": classify_battery_category(category),
+            items.append({"brand": brand, "category": category,
+                          "category_class": classify_battery_category(category),
                           "source": source, "evidence": _clean(record.get("raw_text")) or " | ".join(map(str, record.get("cells") or [])),
                           "confidence": "high" if category else "medium"})
 
