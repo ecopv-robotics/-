@@ -87,3 +87,23 @@ def test_catalog_record_with_brand_and_category_reaches_battery_items():
     result = extract_battery_items(project="德国电池法", attachments=attachments)
     brands = [item["brand"] for item in result["items"] if item["brand"]]
     assert "HONGSAMDE" in brands
+
+
+def test_header_text_is_never_returned_as_brand_or_category():
+    """表头文字/计量说明不能被当成品牌或类别值。
+
+    真实泛欧模板里同一列会叠两行表头（中文一行、英文一行），
+    或把“预估销售量/单个电池重量”写在相邻列；这些文字一旦进入
+    brand 字段，业务会误以为提取成功，比留空更糟。
+    """
+    rows = [
+        ["公司中文名称", "产品类别", "产品名称", "对应的品牌\nBrand", "预估销售量"],
+        ["示例甲贸易有限公司", "小型设备", "示例产品A", "对应的品牌\nBrand", "5T"],
+        ["", "", "", "uwant", ""],
+    ]
+    records = parser._xlsx_structured_records(rows, "Sheet1")
+    for record in records:
+        brand = str(record.get("brand") or "")
+        assert "品牌" not in brand
+        assert "Brand" not in brand
+        assert "销售" not in brand

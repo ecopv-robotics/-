@@ -6,7 +6,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
-PACKAGE_NAME = "ECOPV_Mail_Audit_Workbench_2026-10-10-r2"
+PACKAGE_NAME = "ECOPV_Mail_Audit_Workbench_2026-10-21"
 
 datas = [(str(PROJECT_ROOT / "workbench.html"), ".")]
 web_assets = PROJECT_ROOT / "web_console"

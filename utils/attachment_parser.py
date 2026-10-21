@@ -660,6 +660,44 @@ def _xlsx_customer_value(value: str) -> str:
     return text
 
 
+_XLSX_HEADER_VALUE_HINTS = re.compile(
+    r"必填|选填|预估销售量|预计全年销售|预估重量|投放到市场的公斤数|公斤|"
+    r"单个电池重量|产品链接|商标注册|产品图片|数量\s*\(|重量\s*\(",
+    re.I,
+)
+# 只有“整格就是品牌/类别列名”才算表头文字；不能用 _xlsx_header_role 的
+# 子串匹配，否则 DemoBrand 这类真实品牌名会因为含 brand 被误删。
+_XLSX_BRAND_HEADER_TEXT_RE = re.compile(
+    r"^(?:对应(?:的)?)?\s*(?:品牌|brand|marke)(?:名称|名|logo)?\s*\d*\s*"
+    r"(?:[（(][^）)]*[）)])?\s*(?:brand|marke)?$",
+    re.I,
+)
+_XLSX_CATEGORY_HEADER_TEXT_RE = re.compile(
+    r"^(?:对应(?:的)?)?\s*(?:产品|商品|设备|电池)?\s*(?:类别|品类|分类|類型|類型)\s*\d*\s*"
+    r"(?:[（(][^）)]*[）)])?\s*(?:category|type|kategorie)?$",
+    re.I,
+)
+
+
+def _xlsx_value_is_noise(value: str, role: str = "") -> bool:
+    """判断单元格内容是不是表头文字或计量说明，而不是业务值。
+
+    泛欧模板常在同一个位置叠两行表头（中文一行、英文一行），或把
+    “预估销售量”“单个电池重量”写在品牌列相邻列；这些文字一旦进入 brand，
+    业务会误以为提取成功，比留空更糟。
+    """
+    text = re.sub(r"\s+", "", _xlsx_cell_text(value))
+    if not text:
+        return True
+    if role == "brand" and _XLSX_BRAND_HEADER_TEXT_RE.fullmatch(text):
+        return True
+    if role == "category" and _XLSX_CATEGORY_HEADER_TEXT_RE.fullmatch(text):
+        return True
+    if re.fullmatch(r"[*＊]?(?:必填|选填)[*＊]?", text):
+        return True
+    return len(text) >= 4 and bool(_XLSX_HEADER_VALUE_HINTS.search(text))
+
+
 def _xlsx_preferred_role_columns(
     row: List[str], columns: List[int], role: str
 ) -> List[int]:
@@ -793,10 +831,14 @@ def _xlsx_structured_records(rows: List[List[str]], sheet_name: str) -> List[Dic
                 continue
 
             def values_for(role: str, row_values: List[str] = values) -> List[str]:
-                return [
-                    row_values[col] for col in role_columns.get(role, [])
-                    if col < len(row_values) and row_values[col]
-                ]
+                result = []
+                for col in role_columns.get(role, []):
+                    if col >= len(row_values) or not row_values[col]:
+                        continue
+                    if role in {"brand", "category"} and _xlsx_value_is_noise(row_values[col], role):
+                        continue
+                    result.append(row_values[col])
+                return result
 
             customers = values_for("customer")
             codes = values_for("customer_code")
