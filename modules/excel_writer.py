@@ -427,7 +427,11 @@ class ExcelWriter:
             hints.append("核对客户")
         if not row.get("项目"):
             hints.append("核对项目")
-        if row.get("需求") not in {"注册", "新增", "撤单"}:
+        if row.get("需求") == "取消注册":
+            # 取消单不能用“工单是否存在”判定（查不到才是正常），因此仍留在
+            # 漏单复查里由人工确认，但提示要写清楚，避免被当成普通漏单处理。
+            hints.append("取消单：请在工单系统确认该业务是否已撤销")
+        elif row.get("需求") not in {"注册", "新增", "撤单"}:
             hints.append("核对需求")
         if row.get("置信度") == "需人工确认":
             hints.append("完成后再导入工单核对")

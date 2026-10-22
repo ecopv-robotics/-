@@ -68,7 +68,7 @@ class FieldExtractor:
         )
 
         # E1a: 提取需求类型
-        need = self._extract_need(subject + " " + body)
+        need = self._extract_need(subject + " " + body, subject=subject)
 
         # E1a+: 结构化「公司+项目」清单行 (代理群发多公司邮件, 主题/正文逐行声明)
         groups = self._structured_groups(subject, body)
@@ -1086,14 +1086,57 @@ class FieldExtractor:
                 return False
         return expected.issubset(proposed)
 
-    def _extract_need(self, text: str) -> str:
-        """提取需求类型: 注册/新增/撤单"""
-        if "撤单" in text:
-            return "撤单"
-        if "新增" in text:
-            return "新增"
-        if "注册" in text:
-            return "注册"
+    # 取消类动作优先级高于“注册”：取消注册必然包含“注册”子串，
+    # 按位置或固定优先级判断都会把取消单读成新注册。
+    _NEED_CANCEL = re.compile(
+        r"取消注册|取消註冊|撤销注册|撤銷註冊|注销注册|註銷註冊|"
+        r"取消备案|取消備案|取消申请|取消申請|不再注册|不做了",
+        re.I,
+    )
+    _NEED_ACTIONS = (
+        ("撤单", re.compile(r"撤单|撤單")),
+        ("变更", re.compile(r"变更|變更|更改信息|修改信息")),
+        ("续费", re.compile(r"续费|續費")),
+        ("新增", re.compile(r"新增")),
+        ("注册", re.compile(r"注册|註冊|申报|申報")),
+    )
+    _NEED_NEGATION = re.compile(r"(?:不要|不用|不需要|无需|無需|别|別)[^，。；;]{0,4}$")
+
+    def _extract_need(self, text: str, subject: str = "") -> str:
+        """提取需求（业务动作）：注册 / 取消注册 / 变更 / 续费 / 新增 / 撤单。
+
+        真实邮件里“取消注册”包含“注册”子串，旧实现按固定优先级返回
+        “注册”，业务会朝相反方向去核对工单。这里先判断取消类动作
+        （取主题最可信，引用正文常保留原始“注册”字样），再按动作词
+        首次出现的位置判断其余动作；带否定的“不要取消注册”不算取消。
+        """
+        head = re.sub(r"^\s*(?:re|fw|fwd)\s*[:：]\s*", "", str(subject or ""), flags=re.I)
+
+        def _first_cancel(source: str) -> bool:
+            for match in self._NEED_CANCEL.finditer(source):
+                prefix = source[max(0, match.start() - 8):match.start()]
+                if not self._NEED_NEGATION.search(prefix):
+                    return True
+            return False
+
+        for source in (head, text):
+            if source and _first_cancel(source):
+                return "取消注册"
+
+        for source in (head, text):
+            if not source:
+                continue
+            found = []
+            for label, pattern in self._NEED_ACTIONS:
+                for match in pattern.finditer(source):
+                    prefix = source[max(0, match.start() - 8):match.start()]
+                    if self._NEED_NEGATION.search(prefix):
+                        continue
+                    found.append((match.start(), label))
+                    break
+            if found:
+                found.sort(key=lambda item: item[0])
+                return found[0][1]
         return ""
 
     @staticmethod
