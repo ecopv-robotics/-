@@ -775,15 +775,47 @@ def _record_mentions_company(record: Dict[str, Any], company: str, filename: str
     return bool(haystack and target in haystack)
 
 
+_SCOPED_FIELD_LABEL_RE = re.compile(
+    r"^(?:新增品牌|新品牌|品牌名称|品牌名|品牌|brand(?:\s+name)?|marke|型号|"
+    r"新增类别|新增品类|新增类目|新类别|新品类|产品类别|产品分类|注册类别|注册品类|"
+    r"申报品类|产品类目|类目|品类|类别)\s*[:：=＝]",
+    re.I,
+)
+
+# 用于判断"这一行属于另一个主体"，作为裁剪时的块边界。
+_COMPANY_LINE_RE = re.compile(
+    r"(?:有限责任公司|股份有限公司|有限公司|公司|商行|经营部|个体|合作社|企业)", re.I,
+)
+
+
 def _scope_body_to_company(body: str, company: str) -> str:
-    """保留正文中明确包含当前主体的行，避免多主体邮件交叉污染。"""
+    """保留正文中属于当前主体的段落，避免多主体邮件交叉污染。
+
+    常见写法是“公司名一行，品牌/类别各占一行”。若只保留含公司名的行，
+    紧跟在下面的“品牌：X”会被整行丢弃，导致品牌提取为空（香港北渡
+    YWNYT 实例）。因此按块处理：命中公司名的行开启一个块，块内后续的
+    字段标签行一并保留，直到出现下一个公司行。
+    """
     target = _norm_product(company)
     if not target:
         return _text(body)
     raw = re.sub(r"&(?:nbsp|amp);", " ", _text(body), flags=re.I)
     lines = [line.strip() for line in re.split(r"[\r\n]+", raw) if line.strip()]
-    matched = [line for line in lines if target in _norm_product(line)]
-    return "\n".join(matched)
+    kept: List[str] = []
+    in_block = False
+    for line in lines:
+        if target in _norm_product(line):
+            kept.append(line)
+            in_block = True
+            continue
+        # 块内紧跟字段标签的行属于当前主体（品牌/类别常在下一行）。
+        if in_block and _SCOPED_FIELD_LABEL_RE.match(line):
+            kept.append(line)
+            continue
+        # 遇到另一个主体行即结束当前块，避免把别家的品牌吞进来。
+        if _COMPANY_LINE_RE.search(line):
+            in_block = False
+    return "\n".join(kept)
 
 
 def _is_header_alias(value: Any, aliases: Sequence[str]) -> bool:
