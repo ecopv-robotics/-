@@ -20,6 +20,24 @@ from modules.weee_category_audit import extract_weee_items
 from modules.battery_review import extract_battery_items
 
 
+_GLUED_CODE_RE = re.compile(
+    r"(?<=[\u4e00-\u9fff\)）])(?=[A-Z]{2,6}\d{3,}[ \t\u3000]{1,3}"
+    r"[\u4e00-\u9fff][\u4e00-\u9fff（）()·A-Za-z]{1,30}"
+    r"(?:有限责任公司|股份有限公司|集团有限公司|有限公司|公司|商行|经营部|企业|店))"
+)
+
+
+def split_glued_code_lines(text: str) -> str:
+    """把被粘在同一行的「编号+公司名」拆回独立行。
+
+    真实案例：正文两行在源邮件里丢了换行，变成
+    ``…新增品牌 YBOEG 第五类HST011 郑州兰序网络科技有限公司 新增品牌 eroidn 第五类``。
+    按行解析时这一行只能算一个主体，公司名还会被字段词污染；按编号边界
+    预先插入换行后，两行各自成条。
+    """
+    return _GLUED_CODE_RE.sub("\n", text or "")
+
+
 class FieldExtractor:
     def __init__(
         self,
@@ -60,7 +78,7 @@ class FieldExtractor:
                 客户提取来源, 置信度, match_candidates, ...}]
         """
         subject = mail.get("subject", "") or ""
-        body = mail.get("body_text", "") or ""
+        body = split_glued_code_lines(mail.get("body_text", "") or "")
         attachments = mail.get("attachments", [])
         sender_email = mail.get("sender_email", "").lower()
         decoding_warning = "\ufffd" in (
@@ -1877,6 +1895,10 @@ class FieldExtractor:
         )
         if any(hint in compact for hint in hints):
             return "表单字段标签或说明文字"
+        # 字段标签/类目描述混进公司名（真实案例：正文两行被粘贴成一行，
+        # 公司名变成「新增品牌 YBOEG 第五类HST011 郑州兰序网络科技有限公司」）。
+        if re.search(r"(?:新增品牌|新品牌|新增类目|新增类别|新增品类|第[1-6一二三四五六]\s*类)", text):
+            return "公司名混入字段标签或类目描述"
         if re.match(r"^(?:针对|適用於|适用于|适用|用于|仅限|適用).*(?:业务|服務|服务|资料|材料|项目)$", text):
             return "表单字段标签或说明文字"
         # “以下为/下列为……提交……名单”是代理或发件方对后续名单的

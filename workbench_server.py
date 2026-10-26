@@ -1074,6 +1074,205 @@ def _semantic_program_suggestions(row: Dict[str, Any]) -> List[str]:
     return []
 
 
+def _semantic_company_suggestion(row: Dict[str, Any]) -> str:
+    """从语义校验结论里取出建议的公司主体（``company: XXX``）。"""
+    for key in ("语义建议值", "语义校验建议", "语义校验原因"):
+        value = _text(row.get(key))
+        if not value:
+            continue
+        match = re.search(r"company\s*[:：]\s*([^;；\n]+)", value, re.I)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _norm_company_key(value: Any) -> str:
+    """公司名比较用归一化：去空白/标点/常见法律后缀。"""
+    text = re.sub(r"\s+", "", _text(value)).casefold()
+    for suffix in ("有限责任公司", "股份有限公司", "有限公司", "co.,ltd", "co.,ltd.", "co.ltd", "ltd.", "ltd"):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)]
+    return text.strip(".,，。()（）")
+
+
+def _hide_company_conflict_row(row: Dict[str, Any],
+                               by_mail: Dict[Tuple[str, str, str], List[Dict[str, Any]]]) -> bool:
+    """隐藏「把品牌/别名当成客户公司」的重复行，并把品牌证据并入正确行。
+
+    本行已被 LLM 判为 ``COMPANY_SOURCE_CONFLICT`` 并给出正文里的真实主体；
+    若同一封邮件存在该主体且校验有效，本行不是独立业务，只是同一业务被
+    写错公司名的副本。原行仍保留在 Excel/SQLite 里供审计。
+    """
+    if _text(row.get("语义校验状态")).lower() != "invalid":
+        return False
+    target_name = _semantic_company_suggestion(row)
+    target_key = _norm_company_key(target_name)
+    if not target_key:
+        return False
+    company_key = ("客户公司名称", "客户", "company")
+    siblings = [
+        candidate for candidate in by_mail.get(_mail_identity_tuple(row), [])
+        if candidate is not row
+        and _norm_company_key(next((candidate.get(k) for k in company_key if candidate.get(k)), "")) == target_key
+        and _text(candidate.get("语义校验状态")).lower() != "invalid"
+    ]
+    if not siblings:
+        return False
+
+    # 同一业务在库里可能同时存在「待查名单」与「当前激活」两份快照，界面只显示
+    # 其中一份。品牌证据要补到所有同主体的兄弟行，否则会补在没被显示的那份上。
+    hidden_items = [
+        item for item in _json_list(row.get("德国WEEE品类明细"))
+        if isinstance(item, dict) and _text(item.get("brand"))
+    ]
+    for keeper in siblings:
+        if not hidden_items:
+            break
+        items = [item for item in _json_list(keeper.get("德国WEEE品类明细")) if isinstance(item, dict)]
+        known = {_text(item.get("brand")).casefold() for item in items if _text(item.get("brand"))}
+        added = []
+        for item in hidden_items:
+            brand = _text(item.get("brand"))
+            if brand.casefold() in known:
+                continue
+            # 优先补进本行已有的“有分类、无品牌”项，避免同一业务被拆成两张卡。
+            blank = next(
+                (existing for existing in items
+                 if isinstance(existing, dict) and not _text(existing.get("brand"))),
+                None,
+            )
+            if blank is not None:
+                blank["brand"] = brand
+                blank["source"] = "冲突行合并"
+            else:
+                merged = dict(item)
+                merged["source"] = "冲突行合并"
+                items.append(merged)
+            known.add(brand.casefold())
+            added.append(brand)
+        if not added:
+            continue
+        keeper["德国WEEE品类明细"] = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+        note = "已隐藏 1 条公司冲突行（%s），品牌证据已并入本条：%s" % (
+            _text(next((row.get(k) for k in company_key if row.get(k)), "")), "、".join(added))
+        previous = _text(keeper.get("人工复核提示"))
+        if note not in previous:
+            keeper["人工复核提示"] = ("%s；%s" % (previous, note)) if previous else note
+        # 展示层可能优先用状态快照里的 items，这里把品牌挂到行上，由 _record 兜底补入。
+        brands = [brand for brand in added if brand]
+        if brands:
+            existing_brands = _text(keeper.get("_conflict_brand"))
+            merged_brands = "、".join(
+                dict.fromkeys([b for b in existing_brands.split("、") if b] + brands))
+            keeper["_conflict_brand"] = merged_brands
+    return True
+
+
+_FIELD_NOISE_COMPANY_RE = re.compile(
+    r"(?:新增品牌|新品牌|新增类目|新增类别|新增品类|第[1-6一二三四五六]\s*类)")
+
+
+def _looks_like_noise_company(value: Any) -> bool:
+    """公司名里混进字段标签或类目描述的，肯定不是主体名。
+
+    真实案例：正文一行粘了两家公司（``…第五类HST011 郑州兰序…``），分组后
+    客户名变成「新增品牌 YBOEG 第五类HST011 郑州兰序网络科技有限公司」。
+    只按字段标签判定：编号模式会把「示例ce093a2c」这类正常名称也误判。
+    """
+    return bool(_FIELD_NOISE_COMPANY_RE.search(_text(value)))
+
+
+def _should_hide_invalid_row(row: Dict[str, Any],
+                             by_mail: Dict[Tuple[str, str, str], List[Dict[str, Any]]]) -> bool:
+    """语义校验判 invalid 且公司名明显非法的行，若有同邮件有效行承接则隐藏。
+
+    校验结论（``语义校验状态=invalid``）必须当闸门用，而不是只处理个别
+    问题编号：``COMPANY_CODE_MIXED`` 这类同样意味着该行不能当业务展示。
+    只在"公司名本身不成立"时隐藏，且要求同邮件已有有效行，避免凭空删业务。
+    """
+    if _text(row.get("语义校验状态")).lower() != "invalid":
+        return False
+    company = _text(next((row.get(k) for k in ("客户公司名称", "客户", "company") if row.get(k)), ""))
+    if not _looks_like_noise_company(company):
+        return False
+    siblings = [
+        candidate for candidate in by_mail.get(_mail_identity_tuple(row), [])
+        if candidate is not row
+        and _text(candidate.get("语义校验状态")).lower() != "invalid"
+        and not _looks_like_noise_company(
+            next((candidate.get(k) for k in ("客户公司名称", "客户", "company") if candidate.get(k)), ""))
+    ]
+    return bool(siblings)
+
+
+def _unify_battery_evidence(rows: List[Dict[str, Any]], database=None) -> List[Dict[str, Any]]:
+    """同一明细号的电池法证据跨行补齐。
+
+    同一业务在库里可能同时存在「待查名单」与「当前激活」两份行，其中一份
+    的 ``德国电池法品类明细`` 被写成空壳（品牌和分类都空）。展示集合里可能
+    只有空壳那份，因此没有供体时回落到数据库按明细号取证据。
+    """
+    def items_of(row):
+        return [item for item in _json_list(row.get("德国电池法品类明细")) if isinstance(item, dict)]
+
+    def is_blank(row):
+        return not any(_text(item.get("brand")) or _text(item.get("category")) for item in items_of(row))
+
+    def donor_items(row):
+        items = items_of(row)
+        if any(_text(item.get("brand")) for item in items):
+            return items
+        return items if any(_text(item.get("category")) for item in items) else []
+
+    def detail_key(row):
+        # 同一明细的 detail_number 才是一致身份；老行里的「明细编号」是另一套编码。
+        return _text(row.get("detail_number")) or _text(row.get("明细编号"))
+
+    groups: Dict[Tuple[Any, str], List[Dict[str, Any]]] = {}
+    for row in rows:
+        groups.setdefault((_mail_identity_tuple(row), detail_key(row)), []).append(row)
+
+    db_index: Optional[Dict[str, List[Dict[str, Any]]]] = None
+
+    def lookup_donor(detail: str) -> List[Dict[str, Any]]:
+        nonlocal db_index
+        if database is None or not detail:
+            return []
+        if db_index is None:
+            db_index = {}
+            for dataset in ("workorder", "active"):
+                try:
+                    for row in database.read_rows(dataset):
+                        db_index.setdefault(detail_key(row), []).append(row)
+                except Exception:
+                    continue
+        for row in db_index.get(detail, []):
+            items = donor_items(row)
+            if any(_text(item.get("brand")) for item in items):
+                return items
+        return []
+
+    for (_, detail), group in groups.items():
+        blanks = [row for row in group if is_blank(row)]
+        if not blanks:
+            continue
+        donor = next((donor_items(row) for row in group if donor_items(row)), None)
+        if not donor:
+            donor = lookup_donor(detail)
+        if not donor:
+            continue
+        brands = "、".join(_text(item.get("brand")) for item in donor if _text(item.get("brand")))
+        for row in blanks:
+            row["德国电池法品类明细"] = json.dumps(donor, ensure_ascii=False, separators=(",", ":"))
+            # 状态里的空快照会盖掉行数据，额外挂一份供 _record 兜底。
+            row["_battery_donor_items"] = json.dumps(donor, ensure_ascii=False, separators=(",", ":"))
+            note = "电池法品类证据由同一明细的另一份记录补齐：%s" % brands
+            previous = _text(row.get("人工复核提示"))
+            if note not in previous:
+                row["人工复核提示"] = ("%s；%s" % (previous, note)) if previous else note
+    return rows
+
+
 def _hide_superseded_review_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Hide clearly superseded legacy LLM rows without deleting their source.
 
@@ -1098,6 +1297,13 @@ def _hide_superseded_review_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, A
             continue
         issue_codes = _text(row.get("语义问题编号"))
         if "PROJECT_COVERAGE_MISSING" not in issue_codes:
+            # 公司冲突类：LLM 已指出本条把品牌/别名当成客户公司，且给出了
+            # 正文里的真实主体。那种行是同一业务的错误副本，不该再算一条业务。
+            if _hide_company_conflict_row(row, by_mail):
+                continue
+            # 其余 invalid（如 COMPANY_CODE_MIXED）：公司名本身不成立时同样隐藏。
+            if _should_hide_invalid_row(row, by_mail):
+                continue
             result.append(row)
             continue
 
@@ -1516,6 +1722,8 @@ class WorkbenchStore:
         # 但隐藏同一封邮件中被语义校验明确判定为“应改回已有主记录”的
         # 旧人工补全行，避免一封邮件被显示成多个虚假的业务明细。
         display_records = _hide_superseded_review_rows(records)
+        # 同一明细的电池法证据可能在另一份行里，展示前补齐（含回落查库）。
+        display_records = _unify_battery_evidence(display_records, self.database)
         if self.database is not None:
             # 先把本次阶段一输出增量写入数据库。数据库保存完整历史，
             # 但当前队列不能把同一封邮件在历次解析中产生的旧版本一起展示，
@@ -1602,12 +1810,12 @@ class WorkbenchStore:
                         key = _text(row.get("_db_record_key")) or _text(row.get("_id"))
                         if key and key not in selected_keys:
                             selected.append(row)
-                return selected
+                return _unify_battery_evidence(selected, self.database)
             if stored_display:
-                return stored_display
+                return _unify_battery_evidence(stored_display, self.database)
         # 测试/临时会话没有数据库覆盖层，也必须使用与正式工作台相同的
         # 未识别公司清空与待复核规则，避免把发件方说明句继续显示成客户。
-        return list(display_records)
+        return _unify_battery_evidence(list(display_records), self.database)
 
     def _current_stage1_batch(self) -> Optional[Tuple[str, str, datetime]]:
         """正式工作台以最近一次已发布的阶段一结果限定当前视图。"""
@@ -1715,6 +1923,21 @@ class WorkbenchStore:
                 fields["company"],
             ):
                 weee_items = saved_items
+        # 公司冲突行被隐藏时，它的品牌证据要补到本条（含已存快照的情况），
+        # 否则正确行仍然缺品牌。
+        conflict_brand = _text(row.get("_conflict_brand"))
+        if conflict_brand and weee_items:
+            for brand in [part.strip() for part in conflict_brand.split("、") if part.strip()]:
+                if any(_text(item.get("brand")).casefold() == brand.casefold() for item in weee_items):
+                    continue
+                blank = next(
+                    (item for item in weee_items if not _text(item.get("brand"))), None)
+                if blank is not None:
+                    blank["brand"] = brand
+                    blank["source"] = "冲突行合并"
+                else:
+                    weee_items.append({"brand": brand, "category": "", "source": "冲突行合并"})
+            weee_items = _with_weee_item_ids(weee_items)
         saved_weee_status = _text(saved.get("weee_status"))
         if saved_weee_status == "confirmed":
             for item in weee_items:
@@ -1729,6 +1952,11 @@ class WorkbenchStore:
             status = "ready"
         battery = battery_review(fields["program"], saved,
                                  _json_list(row.get("德国电池法品类明细")), status)
+        # 状态里可能存着一条全空的电池法快照，会把另一份行补齐的品牌盖掉。
+        if _json_list(row.get("_battery_donor_items")):
+            if not any(_text(item.get("brand")) or _text(item.get("category"))
+                       for item in battery.get("items") or [] if isinstance(item, dict)):
+                battery["items"] = _json_list(row.get("_battery_donor_items"))
         if battery["enabled"] and not battery["confirmed"] and status == "confirmed":
             status = "ready"
         # 兼容旧阶段一结果：历史行可能因为申请表模板中的“WEEE产品信息”
