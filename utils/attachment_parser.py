@@ -252,8 +252,18 @@ def _safe_extract_rar(rf, destination: str) -> None:
 
 
 def _configure_rar_tool(rarfile_module) -> str:
-    """让 rarfile 在 Windows 上能发现 winget 安装但尚未刷新 PATH 的 7-Zip。"""
-    candidates = [shutil.which("7z"), shutil.which("7zz")]
+    """让 rarfile 在 Windows 上能找到 7-Zip。
+
+    便携包已经把 7z.exe 放在程序目录的 tools/ 下，业务同事的电脑不装 7-Zip
+    也必须能解 RAR；所以「程序目录优先」排在系统 PATH 与 Program Files 之前。
+    否则过去会报「请安装 7-Zip」——即使包里自带了一份。
+    """
+    candidates = []
+    # 便携包自带 tools/7z.exe，必须排在系统 PATH 与 Program Files 之前。
+    bundled_7z = os.path.join(str(APP_ROOT), "tools", "7z.exe")
+    if os.path.isfile(bundled_7z):
+        candidates.append(bundled_7z)
+    candidates.extend([shutil.which("7z"), shutil.which("7zz")])
     if os.name == "nt":
         program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
         candidates.extend([

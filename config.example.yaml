@@ -8,7 +8,7 @@ email:
   audit_addresses: []
   connect_timeout: 30
   connect_retries: 3
-  cache_enabled: false
+  cache_enabled: true
   cache_dir: cache/mails
 field_extraction:
   # Optional local aliases for one agency; use a real mapping only in ignored config.yaml.
