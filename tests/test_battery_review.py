@@ -243,7 +243,11 @@ def test_battery_export_retains_independent_manual_fields(tmp_path, monkeypatch)
     assert len(rows) == 2  # Unconfirmed WEEE business must not be exported.
     row = dict(zip(rows[0], rows[1]))
     assert row["标准化项目名称"] == "德国电池法"
-    assert json.loads(row["德国电池法品类明细"])[0]["category_class"] == "Manual battery class"
+    # 业务要求：导出表不带品类列（品类可留空），但业务字段必须保留。
+    assert "德国电池法品类明细" not in rows[0]
+    assert "品牌" not in rows[0] and "分类" not in rows[0]
+    assert row["客户公司名称"] and row["代理"] is not None
+    assert row.get("具体业务", "").startswith("德国电池法")
     workbook.close()
 
 
@@ -365,3 +369,60 @@ def test_battery_body_table_cells_on_separate_lines_are_parsed():
     assert "Hethlif" in brands
     assert "设备电池" in classes
     assert result["status"] == "pending"
+
+
+def test_application_form_brand_field_row_is_used_as_brand_evidence():
+    """申请表「品牌」字段行（带必填标记与填写说明）要能抽出品牌。
+
+    真实反馈：德国电池法 重庆振丰维，Sheet1 第10行写着
+    `品牌 *（多个品牌，请用逗号隔开） KDTEND`，界面品牌却是空的。
+    """
+    attachment = {
+        "filename": "重庆振丰维商贸有限公司＋电池法申请表.xlsx",
+        "sheets": [{
+            "sheet_name": "Sheet1",
+            "text": "营业执照地址 * 重庆市丰都县三合街道龙腾大道\n"
+                    "品牌 *（多个品牌，请用逗号隔开） KDTEND\n"
+                    "法人姓名-拼音 * Yuanyuan Liu",
+        }],
+        "structured_records": [],
+    }
+    result = extract_battery_items(
+        subject="美鸥跨境——2026新注册 德国电池法 BG1943\t重庆振丰维商贸有限公司",
+        body="", attachments=[attachment], project="德国电池法",
+        company="重庆振丰维商贸有限公司",
+    )
+    assert [entry["brand"] for entry in result["items"]] == ["KDTEND"]
+    # 品牌补上了，类别仍留空由人工五选一，不趁机猜类别。
+    assert result["items"][0]["category"] == ""
+
+
+def test_application_form_brand_is_not_taken_from_other_company_sheet():
+    attachment = {
+        "filename": "共用申请表.xlsx",
+        "sheets": [{"sheet_name": "Sheet1", "text": "品牌 KDTEND"}],
+        "structured_records": [],
+    }
+    result = extract_battery_items(
+        subject="德国电池法", body="", attachments=[attachment],
+        project="德国电池法", company="重庆振丰维商贸有限公司",
+    )
+    assert [entry["brand"] for entry in result["items"]] == [""]
+
+
+def test_blank_battery_snapshot_does_not_hide_recomputed_brand():
+    """快照里的空壳不能盖掉阶段一后来补出的品牌，但人工确认结果要保住。"""
+    shell = {"battery_items": [{"brand": "", "category": "", "category_class": "设备电池",
+                                "source": "未见专用类别合同", "evidence": "x",
+                                "item_id": "BAT-7027b55e833ddeed", "battery_confirmed": False}]}
+    computed = [{"brand": "KDTEND", "category": "", "category_class": "设备电池",
+                 "source": "申请表品牌字段", "evidence": "品牌 KDTEND"}]
+    assert battery_review("德国电池法", shell, computed, "ready")["items"][0]["brand"] == "KDTEND"
+
+    confirmed = {"battery_items": [{"brand": "", "category": "", "category_class": "设备电池",
+                                    "battery_confirmed": True}]}
+    assert battery_review("德国电池法", confirmed, computed, "confirmed")["items"][0]["brand"] == ""
+
+    manual = {"battery_items": [{"brand": "手填品牌", "category": "工业电池",
+                                "battery_confirmed": False}]}
+    assert battery_review("德国电池法", manual, computed, "ready")["items"][0]["brand"] == "手填品牌"

@@ -3,6 +3,8 @@ import hashlib
 import json
 import re
 
+from modules.brand_extract import extract_brand_values
+
 
 BATTERY_CLASSES = ("设备电池", "轻型交通工具电池", "工业电池", "启动电池", "汽车电池")
 _BATTERY_CONTEXT = re.compile(r"电池|batter(?:y|ies|ie|ien)|BattG|BattVO|BattDG", re.I)
@@ -113,6 +115,98 @@ def _sheet_battery_records(attachment, company):
                    "attachment_name": source_name, "record_type": "battery_section"}
 
 
+_BRAND_FIELD_LABEL = re.compile(
+    r"(?:新增品牌|原主体注册品牌|原注册品牌|注册品牌|品牌名称|品牌名|品牌|brand(?:\s*name)?|marke)",
+    re.I,
+)
+# 字段行必须**以品牌标签开头**：申请表是「品牌 | 值」一行一字段的布局，
+# 而长说明文里到处是 brand/品牌 字样。旧写法用 search 任意位置匹配，把
+# 「… t in Ireland? … brand …」整段截成了品牌（实测 183 个申请表抽出 80 种
+# 取值，绝大多数是表头/说明文）。
+_BRAND_FIELD_LINE = re.compile(
+    r"^[\s\d.、)）\-—_*＊]*(?P<label>新增品牌|原主体注册品牌|原注册品牌|注册品牌|"
+    r"品牌名称|品牌名|品牌|brand\s*name|brand|marke)"
+    r"\s*[*＊]?\s*(?:[（(][^）)]{0,80}[）)]\s*)?[:：]?\s*(?P<value>.+)$",
+    re.I,
+)
+# 品牌字段行里的填写说明/清单文字，不是品牌值。
+_BRAND_VALUE_NOISE = re.compile(
+    r"请|請|提供|填写|填寫|须知|須知|如需|多个|多個|示例|例如|注[:：]|以上|以下|选择|選擇|确认|確認",
+    re.I,
+)
+_FORM_FIELD_WORDS = re.compile(
+    r"必填|选填|選填|logo|预估|預估|销量|销量|重量|尺寸|链接|鏈接|型号|型號|规格|規格|备注|備註|"
+    r"数量|數量|占比|商标|商標|incoterm|invoice|http|www",
+    re.I,
+)
+# 纯中文候选里的业务名词：品牌通常不叫「单个电池重量」「商标注册编号」。
+_BRAND_CN_NOISE = re.compile(
+    r"重量|数量|数量|个数|尺寸|时间|编号|商标|注册|德文|英文|中文|汉字|生产|销售|投放|商用|家用|"
+    r"预估|类型|类别|品类|名称|地址|电话|邮箱|日期|备注|单位|价格|金额|说明|示例|填写|必填|选填|"
+    r"链接|页面|店铺|公司|法人|身份|证件|营业|执照|翻译|市场|国家|电池"
+)
+# 品牌形态：英文/数字型（允许 Co., Ltd. 的空格与逗号）或 2~10 个纯中文字。
+_BRAND_SHAPE_ASCII = re.compile(r"[A-Za-z0-9][A-Za-z0-9 .&'’\-]{0,39}")
+_BRAND_SHAPE_CN = re.compile(r"[\u4e00-\u9fff]{2,10}")
+
+
+def _brand_value_ok(value):
+    """申请表品牌字段的候选值是否可信（形态 + 业务词双重过滤）。"""
+    text = _clean(value)
+    if not text or len(text) > 40:
+        return False
+    if _BRAND_VALUE_NOISE.search(text) or _FORM_FIELD_WORDS.search(text):
+        return False
+    if _BRAND_SHAPE_CN.fullmatch(text):
+        return not _BRAND_CN_NOISE.search(text)
+    if _BRAND_SHAPE_ASCII.fullmatch(text):
+        # 单个字母/纯符号不是品牌（「t」「ts)」这类是说明文被截断的残留）。
+        return bool(re.search(r"[A-Za-z]{2,}|\d", text))
+    return False
+
+
+def _sheet_brand_field_values(attachment, company):
+    """申请表「品牌」字段行 → [(品牌, 证据行)]。
+
+    申请表把品牌填在字段行里（`品牌 *（多个品牌，请用逗号隔开） KDTEND`），
+    解析成结构化记录后只剩公司字段，品牌值读不到 —— 表现为「附件里明明写了
+    品牌，界面品牌是空的」（反馈：德国电池法 重庆振丰维 KDTEND）。
+    这里对工作表文本补一路证据；类别仍留空，由人工在五选一下拉确认。
+    """
+    values = []
+    seen = set()
+    company_key = _norm(company)
+    # 申请表通常把主体写在文件名里（「XX公司＋电池法申请表.xlsx」），表内也可能写。
+    # 两处都没有该公司名时，无法判断这张表属于谁，宁可不采信，避免把别家
+    # 申请表的品牌搬到这封邮件上。
+    bound_to_company = bool(company_key) and company_key in _norm(attachment.get("filename"))
+    for sheet in attachment.get("sheets") or []:
+        if not isinstance(sheet, dict):
+            continue
+        text = str(sheet.get("text") or "")
+        if not text:
+            continue
+        if (company_key and not bound_to_company
+                and company_key not in _norm(text)):
+            continue
+        for line in re.split(r"[\r\n]+", text):
+            line = line.strip()
+            if not line or len(line) > 160:
+                continue
+            match = _BRAND_FIELD_LINE.match(line)
+            if not match:
+                continue
+            for brand in extract_brand_values(line):
+                if not _brand_value_ok(brand):
+                    continue
+                key = _norm(brand)
+                if key in seen:
+                    continue
+                seen.add(key)
+                values.append((brand, line[:300]))
+    return values
+
+
 def extract_battery_items(subject="", body="", attachments=None, project="", company=""):
     """Extract battery brand/type from the selected business and attachment evidence.
 
@@ -123,10 +217,12 @@ def extract_battery_items(subject="", body="", attachments=None, project="", com
         return {"enabled": False, "items": [], "status": "not_applicable"}
     attachments = attachments or []
     items = []
+    form_brands = []
     contract_classes = {}
     for attachment in attachments:
         if not isinstance(attachment, dict):
             continue
+        form_brands.extend(_sheet_brand_field_values(attachment, company))
         filename = _clean(attachment.get("filename"))
         member_names = [filename]
         member_names.extend(str(sheet.get("member_path") or "") for sheet in attachment.get("sheets") or [] if isinstance(sheet, dict))
@@ -203,9 +299,15 @@ def extract_battery_items(subject="", body="", attachments=None, project="", com
     for line in lines:
         if company and _norm(company) not in _norm(line):
             continue
-        if not _BATTERY_CONTEXT.search(line) or (_WEEE_CONTEXT.search(line) and not classify_battery_category(line)):
+        if not _BATTERY_CONTEXT.search(line):
             continue
-        brands = [_clean_field_value(match.group(1)) for match in _BRAND_LABEL.finditer(line)]
+        # 混合邮件里同一行常同时写 WEEE 与电池法；只要出现「电池法」就按电池
+        # 证据处理，不能因为该行没有电池类别而被整行跳过。
+        explicit_battery = re.search(r"电池法|BattG|Batteriegesetz", line, re.I)
+        if (_WEEE_CONTEXT.search(line) and not classify_battery_category(line)
+                and not explicit_battery):
+            continue
+        brands = extract_brand_values(line)
         categories = [_clean_field_value(match.group(1)) for match in _TYPE_LABEL.finditer(line)]
         brands = [value for value in brands if value]
         categories = [value for value in categories if value]
@@ -247,6 +349,25 @@ def extract_battery_items(subject="", body="", attachments=None, project="", com
     if not result:
         result.append({"brand": "", "category": "", "category_class": "",
                        "source": "邮件/附件未找到明确品类", "evidence": "请人工核对电池类别", "confidence": "low"})
+    if form_brands:
+        # 申请表品牌字段优先回填到「品牌还空着」的条目，而不是新增重复行：
+        # 用户看到的是同一条业务原本就有类别候选，只是品牌缺失。
+        empty_items = [item for item in result if not _clean(item.get("brand"))]
+        for order, (brand, evidence) in enumerate(form_brands):
+            if any(_norm(item.get("brand")) == _norm(brand) for item in result):
+                continue
+            if order < len(empty_items):
+                item = empty_items[order]
+                item["brand"] = brand
+                item["source"] = "；".join(part for part in (item.get("source"), "申请表品牌字段") if part)
+                if evidence:
+                    item["evidence"] = evidence
+                if item.get("confidence") == "low":
+                    item["confidence"] = "medium"
+            else:
+                result.append({"brand": brand, "category": "", "category_class": "",
+                               "source": "申请表品牌字段", "evidence": evidence,
+                               "confidence": "medium"})
     for index, item in enumerate(result):
         item["item_id"] = "BAT-" + hashlib.sha256(repr((company, index, item["brand"], item["category"], item["source"])).encode("utf-8")).hexdigest()[:20]
         item["battery_confirmed"] = False
@@ -257,8 +378,24 @@ def is_german_battery(program):
     return re.sub(r"\s+", "", str(program or "")) in {"德国电池", "德国电池法"}
 
 
+def _is_blank_battery_item(item):
+    """品牌、品类都没填的占位壳。"""
+    return (isinstance(item, dict)
+            and not _clean(item.get("brand"))
+            and not _clean(item.get("category")))
+
+
 def battery_review(program, saved, source_items, status):
     items = saved.get("battery_items", source_items)
+    # 快照里可能存着一条「品牌/品类全空」的占位壳。阶段一后来从申请表补出了
+    # 品牌，空壳会把它整条盖掉 —— 表现就是「附件里明明写了品牌，界面是空的」。
+    # 只有「全部是空壳 + 都未确认 + 新证据确实有内容」三个条件同时成立才切换，
+    # 不覆盖任何人工确认结果。
+    if (isinstance(items, list) and items
+            and all(_is_blank_battery_item(item) for item in items)
+            and not any(item.get("battery_confirmed") for item in items if isinstance(item, dict))
+            and any(not _is_blank_battery_item(item) for item in (source_items or []))):
+        items = source_items
     items = items if isinstance(items, list) else []
     required = "battery_items" in saved or bool(items)
     confirmed = bool(items) and all(item.get("battery_confirmed") for item in items)

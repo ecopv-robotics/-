@@ -14,6 +14,17 @@ logger = None
 _ocr_engine = None
 
 
+# 电池型号/化学类型：出现在"品类"列时说明这是电池清单行，不是 WEEE 目录行。
+_BATTERY_TYPE_RE = re.compile(
+    r"^(?:锂离子|锂聚合物|锂金属|磷酸铁锂|镍氢|镍镉|镍锌|铅酸|碱性|锌碳|纽扣|锂锰|"
+    r"二次电池|一次电池|可充电|蓄电池|锂电池|干电池)", re.I)
+
+
+def _is_battery_catalog_row(categories) -> bool:
+    values = [str(value or "").strip() for value in (categories or []) if str(value or "").strip()]
+    return bool(values) and all(_BATTERY_TYPE_RE.match(value) for value in values)
+
+
 def _get_logger():
     global logger
     if logger is None:
@@ -357,6 +368,11 @@ def parse_attachment(
         "structured_records": [],
     }
     if not os.path.exists(filepath):
+        return result
+    # Office 打开文档时生成的「~$xxx.xlsx」是几百字节的锁文件，不是有效压缩包。
+    # 解析必然抛 "File is not a zip file"，日志里看着像故障，其实无业务影响；
+    # 直接在入口跳过，避免每次运行都刷一条 ERROR。
+    if os.path.basename(str(filename or "").replace("\\", "/")).startswith("~$"):
         return result
     if _archive_budget is None:
         _archive_budget = {"members": 0, "bytes": 0}
@@ -877,6 +893,10 @@ def _xlsx_structured_records(rows: List[List[str]], sheet_name: str) -> List[Dic
                 "brand": " ".join(brands),
                 "category": " ".join(categories),
                 "record_type": "weee_catalog" if (not customer and brands and categories) else "entity",
+                "catalog_family": (
+                    "battery" if (not customer and brands and categories and _is_battery_catalog_row(categories))
+                    else ("weee" if (not customer and brands and categories) else "")
+                ),
                 "raw_text": " | ".join(value for value in values if value),
             })
     return records

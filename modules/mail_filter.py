@@ -528,11 +528,21 @@ class MailFilter:
             elif result.get("is_target"):
                 intent = result.get("intent", "")
                 reason = result.get("reason", "")
+                # 全量模式下规则已判有效的邮件也会走这一遍。若直接写成
+                # 「LLM恢复」，事后就完全看不出规则层有没有起作用 ——
+                # 实测 08-24~08-26 的 100 条里 85 条本来就是「方法一」命中的，
+                # 全被覆盖成 LLM恢复，导致“筛选依据”这一列失真。
+                prior_reason = str(mail.get("filter_reason") or "").strip()
+                prior_valid = str(mail.get("filter_status") or "") == "valid"
                 mail["filter_status"] = "valid"
-                mail["filter_reason"] = f"LLM恢复(意图={intent}, 原因={reason})"
+                if prior_valid and prior_reason:
+                    mail["filter_reason"] = f"{prior_reason} | LLM确认(意图={intent})"
+                else:
+                    mail["filter_reason"] = f"LLM恢复(意图={intent}, 原因={reason})"
                 mail["intent_llm_status"] = "accepted_target"
                 recovered.append(mail)
-                self._log(f"LLM 恢复: {subject[:40]} → {intent}")
+                action = "LLM 确认" if prior_valid and prior_reason else "LLM 恢复"
+                self._log(f"{action}: {subject[:40]} → {intent}")
             elif result.get("confidence") == "low":
                 # 全量识别仍无法确定时，不能把低置信度的 false 当作确定过滤，
                 # 否则模型的“我不确定”会直接造成漏单。转人工队列保留原邮件。

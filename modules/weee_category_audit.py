@@ -14,6 +14,8 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Sequence
 
+from modules.brand_extract import extract_brand_values
+
 
 GERMANY_ALIASES = ("德国", "德國", "germany", "german", "deutschland", "de")
 WEEE_RE = re.compile(r"(?<![A-Za-z])WEEE(?![A-Za-z])", re.I)
@@ -27,9 +29,49 @@ _CATEGORY_KEYS = (
     "商品類別", "产品分类", "產品分類", "设备类别", "設備類別", "注册类别",
     "注册品类", "申报品类", "申報品類", "新增类别", "新增品类", "新类别", "新品类",
     "新增类目", "新增品类", "新类目", "类目名称", "類目名稱",
+    # 注册产品信息表里的「产品所属 eae 类别」列
+    "产品所属eae类别", "产品所属eae类別", "eae类别", "eae类別", "eae 类别", "eae",
     "category", "product category",
     "product type", "product name", "product type/name", "warengruppe", "produktkategorie",
 )
+# 「电器单边最大尺寸/cm」列：决定第 4 类（>50cm 大型）还是第 5 类（小型）。
+_SIZE_KEYS = (
+    "电器单边最大尺寸", "单边最大尺寸", "最大尺寸", "单边尺寸", "尺寸",
+    "max size", "maximum size", "size",
+)
+_SIZE_VALUE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(cm|厘米|mm|毫米|m|米)", re.I)
+
+
+def parse_size_cm(value: Any) -> float:
+    """把「60cm」「1.2m」「500mm」解析成厘米；解析不出返回 0。"""
+    if isinstance(value, (int, float)):
+        return float(value)
+    match = _SIZE_VALUE_RE.search(_text(value))
+    if not match:
+        return 0.0
+    number = float(match.group(1))
+    unit = match.group(2).lower()
+    if unit in ("m", "米"):
+        return number * 100
+    if unit in ("mm", "毫米"):
+        return number / 10
+    return number
+
+
+def _record_size_cm(record: Dict[str, Any]) -> float:
+    """从附件结构化行里取尺寸列；没有列时退回该行文本里的尺寸写法。"""
+    for key, value in record.items():
+        if any(marker in _text(key) for marker in _SIZE_KEYS):
+            parsed = parse_size_cm(value)
+            if parsed:
+                return parsed
+            # 列名自带单位（如「电器单边最大尺寸/cm」）时，单元格常只写数字。
+            bare = _text(value).strip()
+            if re.fullmatch(r"\d+(?:\.\d+)?", bare):
+                return float(bare)
+    text = _text(record.get("raw_text")) or " | ".join(_text(cell) for cell in record.get("cells") or [])
+    match = _SIZE_VALUE_RE.search(text)
+    return parse_size_cm(match.group(0)) if match else 0.0
 _WORKORDER_CATEGORY_KEYS = _CATEGORY_KEYS + (
     "品类明细", "品類明細", "类别明细", "類別明細", "分类明细", "分類明細",
     "品类名称", "品類名稱", "类别名称", "類別名稱", "品类名", "类别名",
@@ -254,32 +296,90 @@ def _category_alias_hits(value: Any) -> List[Dict[str, Any]]:
     return sorted(hits.values(), key=lambda item: (-item["score"], item["category_class"]))
 
 
-def classify_weee_product(value: Any) -> Dict[str, Any]:
-    """按产品分类表给单个品牌/品类文字归类。
+def classify_weee_product(value: Any, size_cm: Any = None) -> Dict[str, Any]:
+    """按《产品类别判断图》的判定顺序给品牌/品类文字归类。
 
-    返回 ``matched``、``ambiguous`` 或 ``unmatched``。只有唯一高置信命中才
-    进入自动比对；跨类别命中或只剩弱词命中都保持待人工确认。
+    判定顺序（与注册产品信息表的判断图一致）：
+    换热设备 → 第 1 类；屏幕/显示 → 第 2 类；灯 → 第 3 类；
+    单边最大尺寸 > 50cm → 第 4 类；小型通讯设备 → 第 6 类；其余小型 → 第 5 类。
+
+    没有尺寸也不属于 1/2/3/6 的产品保持 ``ambiguous`` 交人工，不默认第 5 类。
+    返回 ``matched``、``ambiguous`` 或 ``unmatched``。
     """
     raw = _clean_candidate(value)
-    if not raw:
+    size = parse_size_cm(size_cm) if size_cm not in (None, "") else 0.0
+    if not size and raw:
+        size = parse_size_cm(raw)
+    if not raw and not size:
         return {"status": "unmatched", "category_class": "", "category_class_name": "", "candidates": [], "evidence": []}
-    hits = _category_alias_hits(raw)
+
+    hits = _category_alias_hits(raw) if raw else []
+    by_class: Dict[str, Dict[str, Any]] = {}
+    for hit in hits:
+        by_class.setdefault(hit["category_class"], hit)
+
+    def matched(category_class: str, evidence: List[str]) -> Dict[str, Any]:
+        return {
+            "status": "matched",
+            "category_class": category_class,
+            "category_class_name": WEEE_CATEGORY_DEFINITIONS[category_class]["name"],
+            "candidates": [{
+                "category_class": hit["category_class"],
+                "category_class_name": hit["category_class_name"],
+                "score": hit["score"],
+            } for hit in hits],
+            "evidence": evidence,
+        }
+
+    def strong(category_class: str) -> Dict[str, Any]:
+        """该类别足够可信：分数达标且明显高于其它候选，避免跨类命中就下结论。"""
+        hit = by_class.get(category_class)
+        if not hit or hit["score"] < 12:
+            return {}
+        others = [other for other in hits if other["category_class"] != category_class]
+        if others and hit["score"] <= others[0]["score"] * 1.35:
+            return {}
+        return hit
+
+    # 明确写了「第 N 类」时以原文为准，不再由产品词推断。
+    explicit = next((hit for hit in hits if hit["score"] >= 1000), None)
+    if explicit:
+        return matched(explicit["category_class"], list(explicit.get("evidence") or []))
+
+    for category_class in ("1", "2", "3"):
+        hit = strong(category_class)
+        if hit:
+            return matched(category_class, list(hit.get("evidence") or []))
+
+    # 原文已写明「大型设备」时按原文判第 4 类，不再等尺寸。
+    hit = strong("4")
+    if hit:
+        return matched("4", list(hit.get("evidence") or []))
+
+    if size:
+        if size > 50:
+            return matched("4", ["单边最大尺寸 %gcm > 50cm" % size])
+        hit = strong("6")
+        if hit:
+            return matched("6", list(hit.get("evidence") or []))
+        return matched("5", ["单边最大尺寸 %gcm ≤ 50cm" % size])
+
+    hit = strong("6")
+    if hit:
+        return matched("6", list(hit.get("evidence") or []))
+    hit = strong("5")
+    if hit:
+        return matched("5", list(hit.get("evidence") or []))
+
+    # 尺寸未知且不在 1/2/3/6：保留原来的打分兜底，只给候选、不猜类别。
     if not hits:
         return {"status": "unmatched", "category_class": "", "category_class_name": "", "candidates": [], "evidence": []}
     top = hits[0]
-    # 明确类别编号或足够长的完整词组可自动确认；若第二候选相近则不自动猜。
-    if top["score"] >= 1000:
-        status = "matched"
-    elif top["score"] >= 12 and (len(hits) == 1 or top["score"] > hits[1]["score"] * 1.35):
-        status = "matched"
-    elif top["score"] >= 8:
-        status = "ambiguous"
-    else:
-        status = "unmatched"
+    status = "ambiguous" if top["score"] >= 8 else "unmatched"
     return {
         "status": status,
-        "category_class": top["category_class"] if status == "matched" else "",
-        "category_class_name": top["category_class_name"] if status == "matched" else "",
+        "category_class": "",
+        "category_class_name": "",
         "candidates": [{
             "category_class": hit["category_class"],
             "category_class_name": hit["category_class_name"],
@@ -776,9 +876,13 @@ def _record_mentions_company(record: Dict[str, Any], company: str, filename: str
 
 
 _SCOPED_FIELD_LABEL_RE = re.compile(
-    r"^(?:新增品牌|新品牌|品牌名称|品牌名|品牌|brand(?:\s+name)?|marke|型号|"
+    r"^(?:(?:注销|註銷|取消|撤销|撤銷)\s*\d+\s*(?:个|個|款|项|項|种|種)?\s*品牌|"
+    r"原主体注册品牌|原注册品牌|注册品牌|增加品牌|添加品牌|"
+    r"新增品牌|新品牌|品牌名称|品牌名|品牌|brand(?:\s+name)?|marke|型号|"
     r"新增类别|新增品类|新增类目|新类别|新品类|产品类别|产品分类|注册类别|注册品类|"
-    r"申报品类|产品类目|类目|品类|类别)\s*[:：=＝]",
+    r"申报品类|产品类目|类目|品类|类别)\s*[:：=＝]"
+    # 「第五类，小型电子电气设备」这类直接声明类别的行也属于当前主体。
+    r"|^第\s*[1-6一二三四五六]\s*类",
     re.I,
 )
 
@@ -961,6 +1065,11 @@ def extract_weee_items(
         for record in attachment_records:
             if not isinstance(record, dict):
                 continue
+            # 电池清单行（品类是锂离子/镍氢等型号）不是 WEEE 目录证据，
+            # 否则会把电池法申请表的品牌行错开成一条德国WEEE业务。
+            if (str(record.get("record_type") or "") == "weee_catalog"
+                    and str(record.get("catalog_family") or "") == "battery"):
+                continue
             brands = _record_values(record, _BRAND_KEYS)
             categories = _combine_dimension_categories(_record_category_values(record))
             evidence = _text(record.get("raw_text")) or " | ".join(_text(c) for c in record.get("cells") or [])
@@ -982,6 +1091,7 @@ def extract_weee_items(
                     items.append({
                         "brand": brand,
                         "category": category,
+                        "size_cm": _record_size_cm(record),
                         "source": source,
                         "evidence": evidence,
                         "confidence": "high" if category else "medium",
@@ -1006,7 +1116,8 @@ def extract_weee_items(
     # 后的文本已丢掉不含公司名的表头行，品牌列会整列丢失。
     table_brands, table_categories = _table_block_pairs(_text(body))
     brand_pairs = unique_pairs(
-        _label_value_pairs(mail_text, _BRAND_KEYS)
+        [("品牌", value) for value in extract_brand_values(mail_text)]
+        + _label_value_pairs(mail_text, _BRAND_KEYS)
         + _inline_marker_pairs(mail_text, _INLINE_BRAND_MARKERS)
         + [("表格品牌列", value) for value in table_brands]
     )
@@ -1151,7 +1262,7 @@ def extract_weee_items(
         # 品牌不能代替品类参与分类。品牌存在而品类为空时必须保持待人工，
         # 否则会把品牌名中恰好出现的产品词误判成 WEEE 类别。
         category_text = item.get("category") or ""
-        classification = classify_weee_product(category_text)
+        classification = classify_weee_product(category_text, size_cm=item.get("size_cm"))
         item["category_original"] = category_text
         item["category_class"] = classification.get("category_class", "")
         item["category_class_name"] = classification.get("category_class_name", "")

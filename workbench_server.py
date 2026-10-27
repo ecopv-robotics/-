@@ -14,6 +14,7 @@ import mimetypes
 import os
 import re
 import socket
+import sys
 import threading
 import unicodedata
 import uuid
@@ -1183,26 +1184,131 @@ def _looks_like_noise_company(value: Any) -> bool:
 
 
 def _should_hide_invalid_row(row: Dict[str, Any],
-                             by_mail: Dict[Tuple[str, str, str], List[Dict[str, Any]]]) -> bool:
-    """语义校验判 invalid 且公司名明显非法的行，若有同邮件有效行承接则隐藏。
+                            by_mail: Dict[Tuple[str, str, str], List[Dict[str, Any]]]) -> bool:
+    """语义校验判 invalid 且明显不成立的行，若有同邮件有效行承接则隐藏。
 
-    校验结论（``语义校验状态=invalid``）必须当闸门用，而不是只处理个别
-    问题编号：``COMPANY_CODE_MIXED`` 这类同样意味着该行不能当业务展示。
-    只在"公司名本身不成立"时隐藏，且要求同邮件已有有效行，避免凭空删业务。
+    两类情况会被隐藏（都要求同邮件已有有效行，避免凭空删业务）：
+    1. 公司名本身非法（字段标签/类目描述混入）；
+    2. LLM 明确指出项目不符（如「附件为德国电池法申请表，非WEEE」），
+       且该行没有任何 WEEE 品类证据，说明它只是把电池清单行错开成了业务。
     """
-    if _text(row.get("语义校验状态")).lower() != "invalid":
+    if _text(row.get("语义校验状态")).lower() not in {"invalid", "uncertain"}:
         return False
-    company = _text(next((row.get(k) for k in ("客户公司名称", "客户", "company") if row.get(k)), ""))
-    if not _looks_like_noise_company(company):
-        return False
+    company_fields = ("客户公司名称", "客户", "company")
     siblings = [
         candidate for candidate in by_mail.get(_mail_identity_tuple(row), [])
         if candidate is not row
         and _text(candidate.get("语义校验状态")).lower() != "invalid"
         and not _looks_like_noise_company(
-            next((candidate.get(k) for k in ("客户公司名称", "客户", "company") if candidate.get(k)), ""))
+            next((candidate.get(k) for k in company_fields if candidate.get(k)), ""))
     ]
-    return bool(siblings)
+    if not siblings:
+        return False
+    company = _text(next((row.get(k) for k in company_fields if row.get(k)), ""))
+    if _looks_like_noise_company(company):
+        return True
+    reason = " ".join([_text(row.get(key)) for key in (
+        "语义校验原因", "语义校验建议", "语义问题证据", "人工复核提示", "德国WEEE专项说明")] + [
+        _text(item.get(key))
+        for item in _json_list(row.get("德国WEEE品类明细")) if isinstance(item, dict)
+        for key in ("llm_reextract_reason", "evidence")])
+    if re.search(r"非\s*WEEE|不是\s*WEEE|并非\s*WEEE|不属于\s*WEEE|项目不符|应为德国电池|"
+                 r"附件为德国电池", reason, re.I):
+        items = [item for item in _json_list(row.get("德国WEEE品类明细")) if isinstance(item, dict)]
+        if not any(_text(item.get("category")) or _text(item.get("category_class")) for item in items):
+            return True
+    return False
+
+
+def _unify_weee_evidence(rows: List[Dict[str, Any]], database=None) -> List[Dict[str, Any]]:
+    """同一明细号的 WEEE 品牌/品类证据跨行补齐。
+
+    场景：阶段一已把「品牌 Preciva」与正文里的「第五类，小型电子电气设备」
+    合成一条带 category_class 的明细，但库里另一份行（界面实际展示的那份）
+    只剩品牌、品类和类别都被清空。这里按明细号把缺失的品类/类别补回去，
+    缺少供体时再查数据库。
+    """
+    def items_of(row):
+        return [item for item in _json_list(row.get("德国WEEE品类明细")) if isinstance(item, dict)]
+
+    def is_incomplete(row):
+        items = items_of(row)
+        return bool(items) and any(not _text(item.get("category")) for item in items)
+
+    def donor_items(row):
+        items = [item for item in items_of(row) if _text(item.get("category")) or _text(item.get("category_class"))]
+        return items if items else []
+
+    def detail_key(row):
+        return _text(row.get("detail_number")) or _text(row.get("明细编号"))
+
+    groups: Dict[Tuple[Any, str], List[Dict[str, Any]]] = {}
+    for row in rows:
+        groups.setdefault((_mail_identity_tuple(row), detail_key(row)), []).append(row)
+
+    db_index: Optional[Dict[str, List[Dict[str, Any]]]] = None
+
+    def lookup_donor(detail: str) -> List[Dict[str, Any]]:
+        nonlocal db_index
+        if database is None or not detail:
+            return []
+        if db_index is None:
+            db_index = {}
+            for dataset in ("workorder", "active"):
+                try:
+                    for row in database.read_rows(dataset):
+                        db_index.setdefault(detail_key(row), []).append(row)
+                except Exception:
+                    continue
+        for row in db_index.get(detail, []):
+            items = donor_items(row)
+            if items:
+                return items
+        return []
+
+    _dbg = bool(os.environ.get("WB_DEBUG_UNIFY"))
+    if _dbg:
+        print("[unify-weee] rows=%d groups=%d pending=%d" % (
+            len(rows), len(groups),
+            sum(1 for _, g in groups.items() for r in g if is_incomplete(r))), file=sys.stderr)
+    for (_, detail), group in groups.items():
+        pending = [row for row in group if is_incomplete(row)]
+        if _dbg and pending:
+            print("[unify-weee] detail=%r group=%d pending=%d" % (detail[:26], len(group), len(pending)), file=sys.stderr)
+        if not pending:
+            continue
+        donor = next((donor_items(row) for row in group if donor_items(row)), None) or lookup_donor(detail)
+        if _dbg:
+            print("[unify-weee]   donor=%d database=%s" % (len(donor), database is not None), file=sys.stderr)
+        if not donor:
+            continue
+        by_brand = {_text(item.get("brand")).casefold(): item for item in donor if _text(item.get("brand"))}
+        for row in pending:
+            items = items_of(row)
+            changed = False
+            for item in items:
+                if _text(item.get("category")):
+                    continue
+                source = by_brand.get(_text(item.get("brand")).casefold()) or (donor[0] if len(donor) == 1 else None)
+                if not source:
+                    continue
+                for key in ("category", "category_class", "category_class_name", "category_original",
+                            "category_class_evidence"):
+                    if source.get(key) and not item.get(key):
+                        item[key] = source[key]
+                # 有类别号就算已归类：源行可能残留 unmatched 状态。
+                if item.get("category_class"):
+                    item["category_class_status"] = "matched"
+                changed = True
+            if not changed:
+                continue
+            row["德国WEEE品类明细"] = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+            note = "WEEE 品类证据由同一明细的另一份记录补齐：%s" % "、".join(
+                _text(item.get("category")) for item in items if _text(item.get("category")))
+            previous = _text(row.get("人工复核提示"))
+            if note not in previous:
+                row["人工复核提示"] = ("%s；%s" % (previous, note)) if previous else note
+    return rows
 
 
 def _unify_battery_evidence(rows: List[Dict[str, Any]], database=None) -> List[Dict[str, Any]]:
@@ -1724,6 +1830,7 @@ class WorkbenchStore:
         display_records = _hide_superseded_review_rows(records)
         # 同一明细的电池法证据可能在另一份行里，展示前补齐（含回落查库）。
         display_records = _unify_battery_evidence(display_records, self.database)
+        display_records = _unify_weee_evidence(display_records, self.database)
         if self.database is not None:
             # 先把本次阶段一输出增量写入数据库。数据库保存完整历史，
             # 但当前队列不能把同一封邮件在历次解析中产生的旧版本一起展示，
@@ -1746,7 +1853,8 @@ class WorkbenchStore:
                 start, end, _ = batch
                 # 日期覆盖已将该范围旧行从数据库退役；只展示最近一次阶段一
                 # 的范围，不再把范围外的历史邮件追加回当前复核队列。
-                return [row for row in stored_display if start <= _date_filter_key(row.get("发件日期")) <= end]
+                filtered = [row for row in stored_display if start <= _date_filter_key(row.get("发件日期")) <= end]
+                return _unify_weee_evidence(_unify_battery_evidence(filtered, self.database), self.database)
             if records:
                 fresh = list(display_records)
                 fresh_by_mail: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
@@ -1810,12 +1918,12 @@ class WorkbenchStore:
                         key = _text(row.get("_db_record_key")) or _text(row.get("_id"))
                         if key and key not in selected_keys:
                             selected.append(row)
-                return _unify_battery_evidence(selected, self.database)
+                return _unify_weee_evidence(_unify_battery_evidence(selected, self.database), self.database)
             if stored_display:
-                return _unify_battery_evidence(stored_display, self.database)
+                return _unify_weee_evidence(_unify_battery_evidence(stored_display, self.database), self.database)
         # 测试/临时会话没有数据库覆盖层，也必须使用与正式工作台相同的
         # 未识别公司清空与待复核规则，避免把发件方说明句继续显示成客户。
-        return _unify_battery_evidence(list(display_records), self.database)
+        return _unify_weee_evidence(_unify_battery_evidence(list(display_records), self.database), self.database)
 
     def _current_stage1_batch(self) -> Optional[Tuple[str, str, datetime]]:
         """正式工作台以最近一次已发布的阶段一结果限定当前视图。"""
@@ -4013,12 +4121,22 @@ class WorkbenchStore:
             # 主表沿用阶段一“工单待查”表头，因此可直接被阶段二候选列表识别。
             ws.title = "工单待查"
             source_rows = self._raw_records()
+            # 导出表不带 WEEE/电池法的品类明细列（品类允许留空），
+            # 但公司/代理/国家/项目/具体业务这些业务字段必须保留。
+            export_skip = {
+                "德国WEEE品类明细", "德国WEEE品类状态", "德国WEEE专项", "德国WEEE专项说明",
+                "德国WEEE品类核对", "德国WEEE字段复检", "德国电池法品类明细",
+                "品牌", "分类", "品类", "类别", "附件证据", "附件文件索引",
+            }
             original_headers: List[str] = []
             for row in source_rows:
                 for key in row:
-                    if not key.startswith("_") and key not in original_headers:
+                    if key.startswith("_") or key in export_skip:
+                        continue
+                    if key not in original_headers:
                         original_headers.append(key)
-            required = ["邮件编号", "明细编号", "代理", "客户公司名称", "标准化项目名称", "需求"]
+            required = ["邮件编号", "明细编号", "代理", "客户公司名称", "国家",
+                        "标准化项目名称", "具体业务", "需求"]
             # 旧版 initial_row 同时包含中文标准字段和内部字段（客户/项目/date 等）。
             # 阶段二会把标准字段映射成内部键名，因此内部同名字段必须改名，
             # 否则空的内部字段会覆盖标准字段，导致整批被判定为“客户为空”。
@@ -4042,7 +4160,7 @@ class WorkbenchStore:
                     display_header = candidate
                 used_headers.add(display_header)
                 header_specs.append((display_header, source_header))
-            for header in ["德国电池法品类明细", "工作台状态", "工作台确认类型", "人工修改原因", "工作台最后操作时间"]:
+            for header in ["工作台状态", "工作台确认类型", "人工修改原因", "工作台最后操作时间"]:
                 if header in used_headers:
                     continue
                 header_specs.append((header, header))
@@ -4077,6 +4195,12 @@ class WorkbenchStore:
                         "代理": detail["fields"].get("agent", ""),
                         "客户公司名称": detail["fields"].get("company", ""),
                         "标准化项目名称": detail["fields"].get("program", ""),
+                        "国家": detail["fields"].get("country", ""),
+                        "具体业务": (
+                            detail["fields"].get("business")
+                            or " - ".join(x for x in (detail["fields"].get("program", ""),
+                                                      detail["fields"].get("request", "")) if x)
+                        ),
                         "需求": detail["fields"].get("request", ""),
                         # 只有能进入阶段二的明细才写入主表，因此统一导出为
                         # confirmed；WEEE 不要求重复点击普通业务确认按钮。

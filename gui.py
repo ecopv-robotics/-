@@ -936,8 +936,13 @@ class WorkerThread(QThread):
         # M1: 邮件读取
         self._stage1_phase = "邮件下载与附件解析"
         from modules.mail_reader import MailReader
-        # 每次运行从邮箱重新读取，不能由旧配置开启原始邮件缓存。
-        reader = MailReader({**self.config["email"], "cache_enabled": False}, logger)
+        # 原始邮件缓存只省网络、不省解析：命中的是 cache/mails 里的原始 .eml
+        # （键含 UIDVALIDITY，UID 变了自动失效），正文/附件仍按当前代码重新解析。
+        # 旧版本在这里硬编码 False，导致 config.yaml 的 cache_enabled 完全失效，
+        # 同一区间重跑（08-24~08-26 实测 39分48秒）每次都要重新下载 274 封完整
+        # 邮件。改为以配置为准，默认关闭，显式写了 true 才启用。
+        cache_enabled = bool(self.config["email"].get("cache_enabled", False))
+        reader = MailReader({**self.config["email"], "cache_enabled": cache_enabled}, logger)
         self_email = self.config["email"]["address"]
         mails = reader.fetch_mails(
             self.date_from, self.date_to, self_email,

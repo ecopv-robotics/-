@@ -106,6 +106,8 @@
     .business .row[data-field]{cursor:pointer;border-radius:5px;transition:background .15s ease,box-shadow .15s ease}
     .business .row[data-field]:hover{background:#f0f8f5}
     .business .row[data-field].field-selected{background:#e7f4ef;box-shadow:inset 3px 0 0 var(--green)}
+    .weee-item-form label.ev-jump{cursor:pointer;border-bottom:1px dashed currentColor;width:max-content}
+    .weee-item-form label.ev-jump:hover{color:var(--blue,#1668dc)}
     .business[draggable="true"]{cursor:grab}
     .business.dragging{opacity:.55;outline:2px dashed #7db8ab;outline-offset:2px}
     /* 详情头部压缩：把垂直空间还给业务明细；按钮保持单行横向滚动，
@@ -1019,6 +1021,11 @@
   const evidenceFieldMap={代理:'agent',公司:'company',国家:'country',项目:'program',具体业务:'request',附件表:'attachment_record_count'};
   function selectedFieldValue(d,field){
     if(!d)return '';
+    if(field==='weee_brand'||field==='weee_category'){
+      const items=(d.weee&&d.weee.items)||[];
+      const item=items[Number(app.weeeItemIndex)||0]||items[0]||{};
+      return field==='weee_brand'?(item.brand||''):(item.category_original||item.category||'');
+    }
     if(field==='attachment_record_count'){
       const a=d.attachment_audit||{};
       return [a.expected,a.output].filter(Boolean).join(' / ');
@@ -1035,6 +1042,12 @@
     if(field==='company'){
       const withoutCode=raw.replace(/^\s*(?:[A-Za-z]{1,4}\s*[-_]\s*)?[A-Za-z]{1,10}\s*[-_]?\d{2,10}\s+/,'').trim();
       if(withoutCode&&withoutCode!==raw)values.push(withoutCode);
+    }
+    if(field==='weee_brand'||field==='weee_category'){
+      // 品牌常写成「Y WNYT」或「XXX Co., Ltd.」，正文里可能少个空格/后缀；
+      // 同时试用首个词，提高命中率（不做模糊替换，仍按原文匹配）。
+      const core=raw.split(/[\s,，.。;；()（）]+/).filter(Boolean)[0]||'';
+      if(core&&core.length>=6&&core!==raw)values.push(core);
     }
     return [...new Set(values)].sort((a,b)=>b.length-a.length);
   }
@@ -1206,6 +1219,17 @@
       container.innerHTML=results.map((entry,index)=>`<section class="preview-workbook"><div class="preview-workbook-title">${esc(entry.member.path)}</div>${entry.error?`<div class="preview-status">此表无法预览：${esc(entry.error)}</div>`:previewWorkbookHtml(entry.payload,mailId,name,token,entry.memberRef||entry.member.path,`archive-${Date.now()}-${index}`)}</section>`).join('');
     }catch(error){if(!controller.signal.aborted&&modal.isConnected)body.innerHTML=`<div class="preview-status">预览失败：${esc(String(error?.message||error))}。仍可下载原始附件。</div>`}
   }
+  document.addEventListener('click',event=>{
+    const jump=event.target.closest('[data-locate-weee]');
+    if(!jump)return;
+    event.preventDefault();event.stopPropagation();
+    app.weeeItemIndex=Number(jump.dataset.locateWeee)||0;
+    app.highlightField=jump.dataset.locateKind==='brand'?'weee_brand':'weee_category';
+    app.tab='details';
+    renderDetailKeepingScroll();
+    const hit=document.querySelector('#evidence mark');
+    if(hit)hit.scrollIntoView({block:'center',inline:'nearest'});
+  });
   document.addEventListener('click',event=>{
     const link=event.target.closest('a[data-attachment-preview]');
     if(link){event.preventDefault();event.stopPropagation();openAttachmentPreview(link.dataset.mailId,link.dataset.attachmentName,link.dataset.attachmentToken);return}
@@ -1735,7 +1759,7 @@
       }
       const w=detail.weee,items=Array.isArray(w.items)?w.items:[];
       const add=`<button class="btn small" data-add-weee-item="${esc(detail.id)}">＋新增品牌/品类</button>`;
-      const itemsHtml=items.length?items.map((item,index)=>`<div class="weee-item-form" data-weee-item="${index}" data-weee-item-id="${esc(item.item_id||index)}"><div><label>品牌</label><input data-weee-brand value="${esc(item.brand||'')}" placeholder="品牌"/></div><div><label>德国分类</label><select data-weee-class>${weeeClassOptions(item.category_class)}</select></div><div class="weee-item-actions"><button class="btn small primary" data-confirm-weee-item="${esc(detail.id)}" data-weee-item-index="${index}">${item.weee_confirmed?'重新保存此项':'确认此项'}</button><button class="btn small danger" data-delete-weee-item="${esc(detail.id)}" data-weee-item-index="${index}">删除此项</button>${index===items.length-1?add:''}<span class="pill ${item.weee_confirmed?'confirmed':'review'}">${esc(weeeItemStatus(item))}</span></div></div>`).join(''):`<div class="empty compact-empty">未提取到品牌/品类</div><div class="weee-item-actions">${add}</div>`;
+      const itemsHtml=items.length?items.map((item,index)=>`<div class="weee-item-form" data-weee-item="${index}" data-weee-item-id="${esc(item.item_id||index)}"><div><label class="ev-jump" data-locate-weee="${index}" data-locate-kind="brand" title="点击在邮件正文/标题/附件中定位该品牌">品牌</label><input data-weee-brand value="${esc(item.brand||'')}" placeholder="品牌"/></div><div><label>德国分类</label><select data-weee-class>${weeeClassOptions(item.category_class)}</select></div><div class="weee-item-actions"><button class="btn small primary" data-confirm-weee-item="${esc(detail.id)}" data-weee-item-index="${index}">${item.weee_confirmed?'重新保存此项':'确认此项'}</button><button class="btn small danger" data-delete-weee-item="${esc(detail.id)}" data-weee-item-index="${index}">删除此项</button>${index===items.length-1?add:''}<span class="pill ${item.weee_confirmed?'confirmed':'review'}">${esc(weeeItemStatus(item))}</span></div></div>`).join(''):`<div class="empty compact-empty">未提取到品牌/品类</div><div class="weee-item-actions">${add}</div>`;
       return `<div class="weee-detail-card ${selected.id===detail.id?'selected':''}" data-weee-detail="${esc(detail.id)}"><div class="weee-detail-head"><b>${esc(detail.fields?.company||'公司待确认')}</b><button class="btn small" data-add-detail-project="${esc(detail.id)}" title="同一公司再新增一个项目">＋新增项目</button><span class="pill ${w.confirmed?'confirmed':'review'}">${esc(weeeStatusLabel(detail))}</span></div><div class="weee-mail-meta"><span>代理：${esc(detail.fields?.agent||'待确认')}</span><span>项目：${esc(detail.fields?.program||'德国WEEE')}</span></div>${itemsHtml}</div>`;
     });
     const groupOf=detail=>isBatteryDetail(detail)?'battery':(detail.weee?.enabled||/^德国\s*WEEE$/i.test(detail.fields?.program||''))?'weee':'other';
@@ -1762,8 +1786,12 @@
     const attachmentItems=attachmentFilesFor(mail,detail);
     const attachments=attachmentItems.length?attachmentItems.map(item=>attachmentChip(mail,item,'',false,detail)).join(''):attachmentNames(mail).map(name=>attachmentChip(mail,name,'',false,detail)).join('')||'<span class="muted">无附件</span>';
     const attachmentContent=renderAttachmentEvidence(mail,detail,'','').all;
+    const hf=app.tab==='details'?app.highlightField:null;
+    const hval=hf?selectedFieldValue(detail,hf):'';
+    const hneedles=hval?evidenceNeedles(hf,hval):[];
+    const hitSummary=hval?`<div class="evidence-match-summary">当前字段：<b>${esc(hf==='weee_brand'?'品牌':'品类')}</b>　正文 ${countEvidenceHits(mail.body||'',hneedles)} 处 · 标题 ${countEvidenceHits(mail.subject||'',hneedles)} 处</div>`:'';
     const items=battery?(detail.battery.items||[]).map((item,index)=>`<div class="weee-evidence-card"><h4>${index+1}. ${esc(item.brand||'品牌待核对')} · ${esc(item.category||'原始品类待核对')}</h4><div class="weee-rule">德国分类：${esc(item.category_class||'待选择')}${item.confidence==='low'?' · 仅供人工判断':''}</div><div class="ev-line"><span>证据来源：</span>${esc(item.source||'邮件/附件')}</div><div class="raw">${esc(item.evidence||'请核对原始附件')}</div></div>`).join(''):(detail.weee.items||[]).map((item,index)=>`<div class="weee-evidence-card"><h4>${index+1}. ${esc(item.brand||'未提取品牌')} · ${esc(item.category||item.category_original||'未提取品类')}</h4><div class="weee-rule">分类结果：${item.category_class?`第${esc(item.category_class)}类 · ${esc(item.category_class_name||'')}`:'尚未唯一归类'}<br>规则来源：${esc(item.category_rule_source||'产品分类表 中文版.docx')}${weeeItemDecomposition(item)}</div><div class="ev-line" style="margin-top:7px"><span>证据来源：</span>${esc((item.sources||[]).join('；')||item.source||'邮件/附件')}</div><div class="raw" style="margin-top:7px">${esc(item.evidence||'没有保存到原始证据文本')}</div></div>`).join('');
-    box.innerHTML=`<h3>德国 ${battery?'电池法':'WEEE'} 证据</h3><div class="ev-card"><div class="ev-label">邮件标题</div><div class="ev-line">${esc(mail.subject||'无主题')}</div><span class="source">来源：邮件主题</span></div><div class="ev-card"><div class="ev-label">邮件正文</div><div class="raw">${esc(mail.body||'（正文为空）')}</div><span class="source">来源：邮件正文</span></div><div class="ev-card"><div class="ev-label">附件清单</div><div>${attachments}</div><span class="source">来源：邮件附件名称</span></div>${attachmentContent}<div class="section-title" style="margin-top:14px">当前明细的品牌/品类证据</div>${items||'<div class="empty">未提取到可回溯的品牌/品类证据</div>'}${battery?'':`<div class="weee-rule" style="margin-top:10px"><b>核对路径：</b>工作台 → 工单管理 → 注册工单 → 品类明细。操作人员确认后，阶段二读取该页签中的品牌/品类字段，与本页项目逐项比较。</div>`}`;
+    box.innerHTML=`<h3>德国 ${battery?'电池法':'WEEE'} 证据</h3>${hitSummary}<div class="ev-card"><div class="ev-label">邮件标题</div><div class="ev-line">${highlightEvidence(mail.subject||'无主题',hneedles,Boolean(hval))}</div><span class="source">来源：邮件主题</span></div><div class="ev-card"><div class="ev-label">邮件正文</div><div class="raw">${highlightEvidence(mail.body||'（正文为空）',hneedles,Boolean(hval))}</div><span class="source">来源：邮件正文</span></div><div class="ev-card"><div class="ev-label">附件清单</div><div>${attachments}</div><span class="source">来源：邮件附件名称</span></div>${attachmentContent}<div class="section-title" style="margin-top:14px">当前明细的品牌/品类证据</div>${items||'<div class="empty">未提取到可回溯的品牌/品类证据</div>'}${battery?'':`<div class="weee-rule" style="margin-top:10px"><b>核对路径：</b>工作台 → 工单管理 → 注册工单 → 品类明细。操作人员确认后，阶段二读取该页签中的品牌/品类字段，与本页项目逐项比较。</div>`}`;
   }
   const _renderDetailBeforeWeee=renderDetail;
   renderDetail=function(){if(currentMailHasGermanSpecial()){renderWeeeDetail();return}_renderDetailBeforeWeee()};
