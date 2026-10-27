@@ -1,7 +1,7 @@
 ﻿$ErrorActionPreference = 'Stop'
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$releaseName = 'ECOPV_Mail_Audit_Workbench_2026-10-21'
+$releaseName = if ($env:ECOPV_RELEASE_NAME) { $env:ECOPV_RELEASE_NAME } else { 'ECOPV_Mail_Audit_Workbench_2026-10-21' }
 $releaseDir = Join-Path (Join-Path $projectRoot 'dist') $releaseName
 $archivePath = Join-Path (Join-Path $projectRoot 'dist') ($releaseName + '.zip')
 $buildPath = Join-Path (Join-Path $projectRoot 'build') 'pyinstaller-20261021'

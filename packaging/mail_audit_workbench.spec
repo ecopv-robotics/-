@@ -1,12 +1,16 @@
 """Windows onedir release for the current integrated mail-audit workbench."""
 
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, copy_metadata
 
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
-PACKAGE_NAME = "ECOPV_Mail_Audit_Workbench_2026-10-21"
+# 版本名由构建脚本通过环境变量传入，便于按日期出包；未传时保持历史默认值。
+PACKAGE_NAME = os.environ.get(
+    "ECOPV_RELEASE_NAME", "ECOPV_Mail_Audit_Workbench_2026-10-21"
+)
 
 datas = [(str(PROJECT_ROOT / "workbench.html"), ".")]
 web_assets = PROJECT_ROOT / "web_console"
