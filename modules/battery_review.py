@@ -136,33 +136,82 @@ _BRAND_VALUE_NOISE = re.compile(
 )
 _FORM_FIELD_WORDS = re.compile(
     r"必填|选填|選填|logo|预估|預估|销量|销量|重量|尺寸|链接|鏈接|型号|型號|规格|規格|备注|備註|"
-    r"数量|數量|占比|商标|商標|incoterm|invoice|http|www",
+    r"数量|數量|占比|商标|商標|register|registration|\bnr\b|号码|incoterm|invoice|http|www",
     re.I,
 )
 # 纯中文候选里的业务名词：品牌通常不叫「单个电池重量」「商标注册编号」。
 _BRAND_CN_NOISE = re.compile(
     r"重量|数量|数量|个数|尺寸|时间|编号|商标|注册|德文|英文|中文|汉字|生产|销售|投放|商用|家用|"
     r"预估|类型|类别|品类|名称|地址|电话|邮箱|日期|备注|单位|价格|金额|说明|示例|填写|必填|选填|"
-    r"链接|页面|店铺|公司|法人|身份|证件|营业|执照|翻译|市场|国家|电池"
+    r"链接|页面|店铺|公司|法人|身份|证件|营业|执照|翻译|市场|国家|"
+    r"对应|相应|上述|如下|详见|参见|同上|以下|以上|其他|其它"
 )
-# 品牌形态：英文/数字型（允许 Co., Ltd. 的空格与逗号）或 2~10 个纯中文字。
-_BRAND_SHAPE_ASCII = re.compile(r"[A-Za-z0-9][A-Za-z0-9 .&'’\-]{0,39}")
+# 品牌形态：英文/数字型（允许 Co., Ltd. 的空格与半角逗号）或 2~10 个纯中文字。
+_BRAND_SHAPE_ASCII = re.compile(r"[A-Za-z0-9][A-Za-z0-9 .,&'’\-]{0,39}")
 _BRAND_SHAPE_CN = re.compile(r"[\u4e00-\u9fff]{2,10}")
+# 净重/尺寸这类测量值会填在「品牌」列附近，被错认成品牌（实测 32.9g）。
+_MEASUREMENT_RE = re.compile(
+    r"^\d+(?:[.,]\d+)?\s*(?:g|kg|mg|t|cm|mm|m|l|ml|w|kw|v|%|个|只|件|pcs?)\.?$", re.I
+)
+
+
+def _is_junk_brand(value):
+    """明显不是品牌的候选：表头/填写说明/业务名词/测量值。
+
+    「品牌」这两个字在申请表和粘贴正文里到处都是，只看标签会大量误抽：
+    `logo（必填） 单边最大尺寸（必填） 产品链接`、`单个电池重量`、
+    `Brand register Nr.`、`32.9g`、`品牌1` 这些都不是品牌。
+    """
+    text = _clean(value)
+    if not text:
+        return True
+    if re.search(r"[（(【\[）)】\]]", text):
+        return True
+    if _FORM_FIELD_WORDS.search(text) or _BRAND_CN_NOISE.search(text):
+        return True
+    if _MEASUREMENT_RE.match(text):
+        return True
+    # 纯日期/纯编号（主题「新增品牌-2026.8.24」会被截成 2026.8.24）不是品牌。
+    if re.fullmatch(r"[\d\s./\-:年月日]+", text):
+        return True
+    if re.fullmatch(r"品牌\s*\d*", text):
+        return True
+    return False
 
 
 def _brand_value_ok(value):
-    """申请表品牌字段的候选值是否可信（形态 + 业务词双重过滤）。"""
+    """品牌候选是否可信（排除噪声 + 形态校验）。正文、表格、附件三条路径共用。"""
     text = _clean(value)
     if not text or len(text) > 40:
         return False
-    if _BRAND_VALUE_NOISE.search(text) or _FORM_FIELD_WORDS.search(text):
+    if _BRAND_VALUE_NOISE.search(text) or _is_junk_brand(text):
         return False
     if _BRAND_SHAPE_CN.fullmatch(text):
-        return not _BRAND_CN_NOISE.search(text)
+        return True
     if _BRAND_SHAPE_ASCII.fullmatch(text):
         # 单个字母/纯符号不是品牌（「t」「ts)」这类是说明文被截断的残留）。
         return bool(re.search(r"[A-Za-z]{2,}|\d", text))
     return False
+
+
+# 申请表品牌栏常写明「多个品牌，请用逗号隔开」，一个格子里会填两个品牌。
+# 半角逗号只有在后面不是公司后缀时才当分隔符，否则「TianTian Co., Ltd.」会被拆坏。
+_COMPANY_SUFFIX = re.compile(
+    r"^(?:co|ltd|limited|inc|llc|gmbh|corp|corporation|sa|s\.a|ag|bv|b\.v|oy|plc)\.?$", re.I
+)
+
+
+def _split_brand_cell(value):
+    """把「mesterth,Naxidf」这类多品牌单元格拆开；公司后缀不拆。"""
+    text = _clean(value)
+    if "," not in text:
+        return [text]
+    parts = [part.strip(" .") for part in text.split(",")]
+    if len(parts) < 2 or any(not part for part in parts):
+        return [text]
+    if any(_COMPANY_SUFFIX.match(part) for part in parts):
+        return [text]
+    return parts
 
 
 def _sheet_brand_field_values(attachment, company):
@@ -199,11 +248,12 @@ def _sheet_brand_field_values(attachment, company):
             for brand in extract_brand_values(line):
                 if not _brand_value_ok(brand):
                     continue
-                key = _norm(brand)
-                if key in seen:
-                    continue
-                seen.add(key)
-                values.append((brand, line[:300]))
+                for single in _split_brand_cell(brand):
+                    key = _norm(single)
+                    if not key or key in seen:
+                        continue
+                    seen.add(key)
+                    values.append((single, line[:300]))
     return values
 
 
@@ -286,6 +336,10 @@ def extract_battery_items(subject="", body="", attachments=None, project="", com
         for index in range(pair_count):
             brand = table_brands[index] if index < len(table_brands) else ""
             category = table_categories[index] if index < len(table_categories) else ""
+            # 表格列错位时，重量/说明文字会落进品牌列（实测 32.9g、
+            # 「对应的品牌logo（必填）」），必须和附件路径用同一套校验。
+            if brand and not _brand_value_ok(brand):
+                brand = ""
             if not (brand or category):
                 continue
             items.append({"brand": brand, "category": category,
@@ -309,7 +363,9 @@ def extract_battery_items(subject="", body="", attachments=None, project="", com
             continue
         brands = extract_brand_values(line)
         categories = [_clean_field_value(match.group(1)) for match in _TYPE_LABEL.finditer(line)]
-        brands = [value for value in brands if value]
+        # 正文里的「品牌」后面常跟着表头/说明文（logo（必填）…、单个电池重量），
+        # 只靠标签会把这些当成品牌名，必须过同一套形态校验。
+        brands = [value for value in brands if _brand_value_ok(value)]
         categories = [value for value in categories if value]
         if not categories:
             category_class = classify_battery_category(line)
@@ -322,6 +378,21 @@ def extract_battery_items(subject="", body="", attachments=None, project="", com
                 items.append({"brand": brand, "category": category, "category_class": classify_battery_category(category),
                               "source": "邮件正文/标题", "evidence": line[:1000], "confidence": "medium"})
 
+    # 品牌常单独成行（「新增品牌：Fyrove」「品牌名称：Goffii」），那一行既没有
+    # 公司名也没有「电池」字样，会被上面的上下文过滤整行丢掉 —— 现象就是
+    # 「正文里明明写了品牌，卡片品牌是空的」。只有在一条品牌都没抽到时，才回退
+    # 到「标签带值就采信」；这样多主体邮件不会因放宽而把别家品牌挂过来。
+    if not any(_clean(item.get("brand")) for item in items):
+        for line in lines:
+            if _WEEE_CONTEXT.search(line) and not _BATTERY_CONTEXT.search(line):
+                continue
+            for value in extract_brand_values(line):
+                if not _brand_value_ok(value):
+                    continue
+                for brand in _split_brand_cell(value):
+                    items.append({"brand": brand, "category": "", "category_class": "",
+                                  "source": "邮件正文品牌行", "evidence": line[:300],
+                                  "confidence": "medium"})
 
     merged = {}
     for item in items:
@@ -387,6 +458,18 @@ def _is_blank_battery_item(item):
 
 def battery_review(program, saved, source_items, status):
     items = saved.get("battery_items", source_items)
+    # 早期版本的品牌抽取把「logo（必填）…」「单个电池重量」「对应的品牌logo（必填）」
+    # 当成品牌存进了人工快照，这些条目会一直跟着这封邮件显示。品牌本身就是
+    # 表头/说明文碎片时，整条都是机器误抽的产物，直接丢掉；人工填的真品牌
+    # 不会命中这些特征。
+    if isinstance(items, list) and items:
+        kept = [
+            item for item in items
+            if not (isinstance(item, dict) and _clean(item.get("brand"))
+                    and _is_junk_brand(item.get("brand")))
+        ]
+        if len(kept) != len(items):
+            items = kept if kept else (source_items or [])
     # 快照里可能存着一条「品牌/品类全空」的占位壳。阶段一后来从申请表补出了
     # 品牌，空壳会把它整条盖掉 —— 表现就是「附件里明明写了品牌，界面是空的」。
     # 只有「全部是空壳 + 都未确认 + 新证据确实有内容」三个条件同时成立才切换，

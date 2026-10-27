@@ -426,3 +426,180 @@ def test_blank_battery_snapshot_does_not_hide_recomputed_brand():
     manual = {"battery_items": [{"brand": "手填品牌", "category": "工业电池",
                                 "battery_confirmed": False}]}
     assert battery_review("德国电池法", manual, computed, "ready")["items"][0]["brand"] == "手填品牌"
+
+
+def _sheet_text_values(text, filename="重庆振丰维商贸有限公司＋电池法申请表.xlsx"):
+    from modules.battery_review import _sheet_brand_field_values
+    attachment = {"filename": filename,
+                  "sheets": [{"sheet_name": "Sheet1", "text": text}]}
+    return [value for value, _ in _sheet_brand_field_values(attachment, "重庆振丰维商贸有限公司")]
+
+
+def test_application_form_brand_row_rejects_header_and_instruction_rows():
+    """「品牌」是长说明表里到处都是的词，只能认「行首标签 + 短品牌值」。
+
+    实测 183 个申请表一次抽出 80 种取值，绝大多数是表头/说明文
+    （logo（必填）…／德文／商标注册编号／t in Ireland?…）。
+    """
+    assert _sheet_text_values("品牌 logo（必填） 产品链接 预估销售量") == []
+    assert _sheet_text_values("Brand register Nr.") == []
+    assert _sheet_text_values("品牌 德文") == []
+    assert _sheet_text_values("单个电池重量 品牌 品牌logo（必填）") == []
+    # 说明文正文里出现 brand 不算字段行（标签必须在行首）。
+    assert _sheet_text_values("Q2 您是否以自己的 brand 在该国销售") == []
+
+
+def test_application_form_brand_row_keeps_real_brand_values():
+    assert _sheet_text_values("品牌 *（多个品牌，请用逗号隔开） KDTEND") == ["KDTEND"]
+    assert _sheet_text_values("品牌：Sandsddy") == ["Sandsddy"]
+    assert _sheet_text_values("品牌 TianTian Co., Ltd.") == ["TianTian Co., Ltd."]
+
+
+def _sheet_text_values(text, filename="重庆振丰维商贸有限公司＋电池法申请表.xlsx"):
+    from modules.battery_review import _sheet_brand_field_values
+    attachment = {"filename": filename,
+                  "sheets": [{"sheet_name": "Sheet1", "text": text}]}
+    return [value for value, _ in _sheet_brand_field_values(attachment, "重庆振丰维商贸有限公司")]
+
+
+def test_application_form_brand_row_rejects_header_and_instruction_rows():
+    """「品牌」是长说明表里到处都是的词，只能认「行首标签 + 短品牌值」。
+
+    实测 183 个申请表一次抽出 80 种取值，绝大多数是表头/说明文
+    （logo（必填）…／德文／商标注册编号／t in Ireland?…）。
+    """
+    assert _sheet_text_values("品牌 logo（必填） 产品链接 预估销售量") == []
+    assert _sheet_text_values("Brand register Nr.") == []
+    assert _sheet_text_values("品牌 德文") == []
+    assert _sheet_text_values("单个电池重量 品牌 品牌logo（必填）") == []
+    # 说明文正文里出现 brand 不算字段行（标签必须在行首）。
+    assert _sheet_text_values("Q2 您是否以自己的 brand 在该国销售") == []
+
+
+def test_application_form_brand_row_keeps_real_brand_values():
+    assert _sheet_text_values("品牌 *（多个品牌，请用逗号隔开） KDTEND") == ["KDTEND"]
+    assert _sheet_text_values("品牌：Sandsddy") == ["Sandsddy"]
+    assert _sheet_text_values("品牌 TianTian Co., Ltd.") == ["TianTian Co., Ltd."]
+
+
+def test_multi_brand_cell_is_split_but_company_suffix_is_not():
+    """申请表写明「多个品牌，请用逗号隔开」，一格两品牌要拆成两条待确认。"""
+    assert _sheet_text_values("品牌 mesterth,Naxidf") == ["mesterth", "Naxidf"]
+    # 公司后缀的逗号不是多品牌分隔符。
+    assert _sheet_text_values("品牌 TianTian Co., Ltd.") == ["TianTian Co., Ltd."]
+
+
+@pytest.mark.parametrize("text", [
+    "品牌 logo（必填） 单边最大尺寸（必填） 产品链接",
+    "品牌 单个电池重量 Gewicht pro srück",
+    "品牌 对应的品牌logo（必填）",
+    "品牌 32.9g",
+    "品牌 品牌1",
+])
+def test_body_brand_line_rejects_form_header_fragments(text):
+    """正文里「品牌」后面跟表头/说明文时不能当品牌（实测这几种都会漏进来）。"""
+    result = extract_battery_items(
+        subject="德国电池法 注册 重庆振丰维商贸有限公司",
+        body=f"重庆振丰维商贸有限公司 德国电池法\n{text}",
+        attachments=[], project="德国电池法", company="重庆振丰维商贸有限公司",
+    )
+    assert [entry["brand"] for entry in result["items"] if entry["brand"]] == []
+
+
+def test_saved_snapshot_drops_junk_brand_items():
+    """早期误存进快照的「logo（必填）…」条目要自动消失，人工品牌不受影响。"""
+    saved = {"battery_items": [
+        {"brand": "logo（必填） 单边最大尺寸（必填） 产品链接", "category": "", "category_class": "设备电池"},
+        {"brand": "单个电池重量", "category": "", "category_class": "设备电池"},
+    ]}
+    assert battery_review("德国电池法", saved, [], "ready")["items"] == []
+
+    manual = {"battery_items": [{"brand": "Coolita", "category": "屏幕设备", "category_class": "工业电池"}]}
+    assert battery_review("德国电池法", manual, [], "ready")["items"][0]["brand"] == "Coolita"
+
+
+@pytest.mark.parametrize("text", [
+    "品牌 logo（必填） 单边最大尺寸（必填） 产品链接",
+    "品牌 单个电池重量 Gewicht pro srück",
+    "品牌 对应的品牌logo（必填）",
+    "品牌 32.9g",
+    "品牌 品牌1",
+])
+def test_body_brand_line_rejects_form_header_fragments(text):
+    """正文里「品牌」后面跟表头/说明文时不能当品牌（实测这几种都会漏进来）。"""
+    result = extract_battery_items(
+        subject="德国电池法 注册 重庆振丰维商贸有限公司",
+        body=f"重庆振丰维商贸有限公司 德国电池法\n{text}",
+        attachments=[], project="德国电池法", company="重庆振丰维商贸有限公司",
+    )
+    assert [entry["brand"] for entry in result["items"] if entry["brand"]] == []
+
+
+def test_saved_snapshot_drops_junk_brand_items():
+    """早期误存进快照的「logo（必填）…」条目要自动消失，人工品牌不受影响。"""
+    saved = {"battery_items": [
+        {"brand": "logo（必填） 单边最大尺寸（必填） 产品链接", "category": "", "category_class": "设备电池"},
+        {"brand": "单个电池重量", "category": "", "category_class": "设备电池"},
+    ]}
+    assert battery_review("德国电池法", saved, [], "ready")["items"] == []
+
+    manual = {"battery_items": [{"brand": "Coolita", "category": "屏幕设备", "category_class": "工业电池"}]}
+    assert battery_review("德国电池法", manual, [], "ready")["items"][0]["brand"] == "Coolita"
+
+
+@pytest.mark.parametrize("subject,body,company,expected", [
+    ("德国电池新增品牌-2026.8.24",
+     "您好，EPR_DE_025030602902\n深圳市远德景科技有限公司\n"
+     "shenzhenshiyuandejingkejiyouxiangongsi\n新增品牌：Fyrove\n\n请安排注册，谢谢",
+     "深圳市远德景科技有限公司", "Fyrove"),
+    ("SY003-首阳跨境咨询-德国电池法+意大利包装法-Goffii",
+     "主体：斯洛伐克\n公司名称：ID corp s. r. o\n"
+     "安排项目：德国电池法+意大利包装法\n品牌名称：Goffii",
+     "ID corp s. r. o", "Goffii"),
+])
+def test_brand_on_its_own_line_is_extracted(subject, body, company, expected):
+    """品牌常单独成行，该行既无公司名也无「电池」字样，不能被上下文过滤整行丢掉。
+
+    真实反馈：德国电池新增品牌（Fyrove）、首阳跨境（Goffii）卡片品牌一直是空的
+    —— 界面上看到的「品牌」其实是输入框 placeholder。
+    """
+    result = extract_battery_items(subject=subject, body=body, attachments=[],
+                                   project="德国电池法", company=company)
+    assert [entry["brand"] for entry in result["items"] if entry["brand"]] == [expected]
+
+
+def test_brand_line_fallback_skips_weee_only_lines():
+    result = extract_battery_items(
+        subject="德国电池法", body="深圳某某科技有限公司\nWEEE 品牌：Coolita 品类：屏幕设备",
+        attachments=[], project="德国电池法", company="深圳某某科技有限公司",
+    )
+    assert [entry["brand"] for entry in result["items"] if entry["brand"]] == []
+
+
+@pytest.mark.parametrize("subject,body,company,expected", [
+    ("德国电池新增品牌-2026.8.24",
+     "您好，EPR_DE_025030602902\n深圳市远德景科技有限公司\n"
+     "shenzhenshiyuandejingkejiyouxiangongsi\n新增品牌：Fyrove\n\n请安排注册，谢谢",
+     "深圳市远德景科技有限公司", "Fyrove"),
+    ("SY003-首阳跨境咨询-德国电池法+意大利包装法-Goffii",
+     "主体：斯洛伐克\n公司名称：ID corp s. r. o\n"
+     "安排项目：德国电池法+意大利包装法\n品牌名称：Goffii",
+     "ID corp s. r. o", "Goffii"),
+])
+def test_brand_on_its_own_line_is_extracted(subject, body, company, expected):
+    """品牌常单独成行，该行既无公司名也无「电池」字样，不能被上下文过滤整行丢掉。
+
+    真实反馈：德国电池新增品牌（Fyrove）、首阳跨境（Goffii）卡片品牌一直是空的
+    —— 界面上看到的「品牌」其实是输入框 placeholder。
+    """
+    result = extract_battery_items(subject=subject, body=body, attachments=[],
+                                   project="德国电池法", company=company)
+    assert [entry["brand"] for entry in result["items"] if entry["brand"]] == [expected]
+
+
+def test_brand_line_fallback_skips_weee_only_lines():
+    result = extract_battery_items(
+        subject="德国电池法", body="深圳某某科技有限公司\nWEEE 品牌：Coolita 品类：屏幕设备",
+        attachments=[], project="德国电池法", company="深圳某某科技有限公司",
+    )
+    assert [entry["brand"] for entry in result["items"] if entry["brand"]] == []
