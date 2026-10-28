@@ -403,6 +403,19 @@ def extract_battery_items(subject="", body="", attachments=None, project="", com
         if old is not item and item["source"] not in old["source"]:
             old["source"] += "；" + item["source"]
     result = list(merged.values())
+    # 同一品类已经有带品牌的条目时，品牌为空的同品类条目只是同一行被正文和附件
+    # 各抽了一次的重复证据（实测 深圳市南幽科技：附件第9行给出 ZCGJERTT，正文又
+    # 给了一条空品牌，界面上就成了两条「设备电池」）。去掉空的那条，品牌留下。
+    branded_categories = {
+        _norm(item.get("category")) for item in result
+        if _clean(item.get("brand")) and _clean(item.get("category"))
+    }
+    if branded_categories:
+        result = [
+            item for item in result
+            if _clean(item.get("brand"))
+            or _norm(item.get("category")) not in branded_categories
+        ]
     for category_class, filename in contract_classes.items():
         if not any(item.get("category_class") == category_class for item in result):
             result.append({"brand": "", "category": category_class, "category_class": category_class,

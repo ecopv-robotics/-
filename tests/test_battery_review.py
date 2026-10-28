@@ -603,3 +603,45 @@ def test_brand_line_fallback_skips_weee_only_lines():
         attachments=[], project="德国电池法", company="深圳某某科技有限公司",
     )
     assert [entry["brand"] for entry in result["items"] if entry["brand"]] == []
+
+
+def test_brandless_duplicate_of_same_category_is_dropped():
+    """同一品类已有带品牌条目时，空品牌那条只是同一条证据被抽了两遍。
+
+    真实反馈：深圳市南幽科技 德国电池法卡里出现「品牌 ZCGJERTT / 设备电池」和
+    「品牌空 / 设备电池」两条，附件第9行已给出品牌，正文又补了一条空品牌。
+    """
+    attachment = {
+        "filename": "深圳市南幽科技有限公司＋德国epr申请表模板.xlsx",
+        "sheets": [{"sheet_name": "Sheet1",
+                    "text": "公司中文名称 深圳市南幽科技有限公司\n品牌 ZCGJERTT\n电池类型 设备电池"}],
+        "structured_records": [],
+    }
+    result = extract_battery_items(
+        subject="德国电池法 深圳市南幽科技有限公司",
+        body="深圳市南幽科技有限公司\n电池类型：设备电池",
+        attachments=[attachment], project="德国电池法", company="深圳市南幽科技有限公司",
+    )
+    brands = [entry["brand"] for entry in result["items"]]
+    assert brands == ["ZCGJERTT"], brands
+
+
+def test_brandless_duplicate_of_same_category_is_dropped():
+    """同一品类已有带品牌条目时，空品牌那条只是同一条证据被抽了两遍。
+
+    真实反馈：深圳市南幽科技 德国电池法卡里出现「品牌 ZCGJERTT / 设备电池」和
+    「品牌空 / 设备电池」两条，附件第9行已给出品牌，正文又补了一条空品牌。
+    """
+    attachment = {
+        "filename": "深圳市南幽科技有限公司＋德国epr申请表模板.xlsx",
+        "sheets": [{"sheet_name": "Sheet1",
+                    "text": "公司中文名称 深圳市南幽科技有限公司\n品牌 ZCGJERTT\n电池类型 设备电池"}],
+        "structured_records": [],
+    }
+    result = extract_battery_items(
+        subject="德国电池法 深圳市南幽科技有限公司",
+        body="深圳市南幽科技有限公司\n电池类型：设备电池",
+        attachments=[attachment], project="德国电池法", company="深圳市南幽科技有限公司",
+    )
+    brands = [entry["brand"] for entry in result["items"]]
+    assert brands == ["ZCGJERTT"], brands
