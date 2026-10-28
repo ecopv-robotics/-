@@ -645,3 +645,55 @@ def test_brandless_duplicate_of_same_category_is_dropped():
     )
     brands = [entry["brand"] for entry in result["items"]]
     assert brands == ["ZCGJERTT"], brands
+
+
+def test_same_brand_category_prefix_is_merged():
+    """同品牌同类别下「便携式电池 锂电池」与「便携式电池」是同一条证据，保留更长的。
+
+    真实反馈：ZENITHFLOW 卡片里同品牌出现两条，一条多写了「锂电池」。
+    """
+    attachment = {
+        "filename": "ZENITHFLOW＋EPR注册申请表.xlsx",
+        "sheets": [],
+        "structured_records": [
+            {"record_type": "weee_catalog", "customer": "ZENITHFLOW SARL",
+             "brand": "ZPUBIKE", "category": "便携式电池 锂电池",
+             "attachment_name": "ZENITHFLOW＋EPR注册申请表.xlsx", "row_number": 5},
+            {"record_type": "weee_catalog", "customer": "ZENITHFLOW SARL",
+             "brand": "ZPUBIKE", "category": "便携式电池",
+             "attachment_name": "ZENITHFLOW＋EPR注册申请表.xlsx", "row_number": 6},
+        ],
+    }
+    result = extract_battery_items(
+        subject="德国电池法 ZENITHFLOW SARL", body="", attachments=[attachment],
+        project="德国电池法", company="ZENITHFLOW SARL",
+    )
+    items = [i for i in result["items"] if i["brand"] == "ZPUBIKE"]
+    assert len(items) == 1, items
+    assert items[0]["category"] == "便携式电池 锂电池"
+
+
+def test_same_brand_category_prefix_is_merged():
+    """同品牌同类别下「便携式电池 锂电池」与「便携式电池」是同一条证据，保留更长的。
+
+    真实反馈：ZENITHFLOW 卡片里同品牌出现两条，一条多写了「锂电池」。
+    """
+    attachment = {
+        "filename": "ZENITHFLOW＋EPR注册申请表.xlsx",
+        "sheets": [],
+        "structured_records": [
+            {"record_type": "weee_catalog", "customer": "ZENITHFLOW SARL",
+             "brand": "ZPUBIKE", "category": "便携式电池 锂电池",
+             "attachment_name": "ZENITHFLOW＋EPR注册申请表.xlsx", "row_number": 5},
+            {"record_type": "weee_catalog", "customer": "ZENITHFLOW SARL",
+             "brand": "ZPUBIKE", "category": "便携式电池",
+             "attachment_name": "ZENITHFLOW＋EPR注册申请表.xlsx", "row_number": 6},
+        ],
+    }
+    result = extract_battery_items(
+        subject="德国电池法 ZENITHFLOW SARL", body="", attachments=[attachment],
+        project="德国电池法", company="ZENITHFLOW SARL",
+    )
+    items = [i for i in result["items"] if i["brand"] == "ZPUBIKE"]
+    assert len(items) == 1, items
+    assert items[0]["category"] == "便携式电池 锂电池"

@@ -57,3 +57,38 @@ def test_battery_class_is_not_treated_as_weee_category():
     )
     categories = [item.get("category") for item in result.get("items") or []]
     assert "设备电池" not in categories
+
+
+def test_battery_row_is_split_per_category_too():
+    """电池法同样一卡一品类（客户口径不区分 WEEE / 电池法）。"""
+    row = {"客户公司名称": "香港郡為電子商務有限公司", "标准化项目名称": "德国电池法",
+           "需求": "注册", "德国电池法品类明细": json.dumps([
+               {"brand": "Amicool", "category": "便携式电池 内置锂电池", "category_class": "设备电池"},
+               {"brand": "43G", "category": "便携式电池", "category_class": "设备电池"},
+           ], ensure_ascii=False)}
+    rows = FieldExtractor._split_weee_category_rows([row])
+    assert len(rows) == 2
+    assert [json.loads(r["德国电池法品类明细"])[0]["brand"] for r in rows] == ["Amicool", "43G"]
+    assert [r["品类拆分行"] for r in rows] == ["1/2", "2/2"]
+    assert all(r["客户公司名称"] == "香港郡為電子商務有限公司" for r in rows)
+
+
+def test_battery_class_filler_row_is_dropped_when_real_categories_exist():
+    """有真实电池品类时，「空品牌 + 设备电池」填充行不该占一条。"""
+    from modules.battery_review import extract_battery_items
+    attachment = {
+        "filename": "香港酷康電子商務有限公司＋epr注册申请表.pdf",
+        "sheets": [],
+        "structured_records": [{"record_type": "weee_catalog", "customer": "",
+                                "brand": "Amicool", "category": "便携式电池 内置锂电池",
+                                "attachment_name": "香港酷康電子商務有限公司＋epr注册申请表.pdf",
+                                "sheet_name": "Sheet1", "row_number": 9}],
+    }
+    result = extract_battery_items(
+        subject="德国电池法 香港酷康電子商務有限公司",
+        body="香港酷康電子商務有限公司\n电池品类：设备电池",
+        attachments=[attachment], project="德国电池法", company="香港酷康電子商務有限公司",
+    )
+    items = result["items"]
+    assert len(items) == 1, items
+    assert items[0]["brand"] == "Amicool"

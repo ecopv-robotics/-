@@ -21,7 +21,7 @@ from modules.battery_review import extract_battery_items
 
 
 # 电池法的五个类别不是 WEEE 品类，混进来只会生成永远「待人工选择」的废行。
-_WEEE_BATTERY_CLASS_KEYS = {
+_BATTERY_CLASS_KEYS = {
     normalize_text(name)
     for name in ("设备电池", "轻型交通工具电池", "工业电池", "启动电池", "汽车电池")
 }
@@ -542,7 +542,7 @@ class FieldExtractor:
         rows = self._split_weee_category_rows(rows)
         if len(rows) != rows_before_split:
             self._log(
-                f"德国WEEE 按品类拆行: {rows_before_split} 行 → {len(rows)} 行"
+                f"德国WEEE/电池法 按品类拆行: {rows_before_split} 行 → {len(rows)} 行"
                 f"（{customer_result.get('customer', '')}）"
             )
 
@@ -718,55 +718,69 @@ class FieldExtractor:
 
     @staticmethod
     def _split_weee_category_rows(rows: List[Dict]) -> List[Dict]:
-        """德国 WEEE 一个品类一行；一行挂多个品类时按品类拆开。
+        """德国 WEEE / 德国电池法：一个品类一行，一行挂多个品类时按品类拆开。
 
         客户口径：一个主体确实有多个品类时，要拆成多条明细，公司名称重复
-        没关系；但不能让人在同一张卡片里看到 N 段重复的「品牌 / 德国分类」。
+        没关系；但不能让人在同一张卡片里看到 N 段重复的「品牌 / 分类」。
 
         拆分后每行只保留自己那一个品类，并用「品类拆分行」记下原始序号，
         让工单核对、人工状态迁移能区分同一主体的兄弟行。单品类行完全不动，
         避免影响历史行的身份与已确认状态。
+
+        一行的项目只会是 WEEE 或电池法之一，所以按「先 WEEE 后电池法」处理即可。
         """
+        def split_items(items, field):
+            cleaned = items
+            if field == "德国WEEE品类明细":
+                # 库里已有的旧行可能还带着「设备电池」这类电池法类别（抽取层的
+                # 过滤只对重跑生效）。拆行时顺手剔掉，避免拆出永远待人工的废行。
+                cleaned = [
+                    item for item in items
+                    if normalize_text(str(item.get("category") or "")) not in _BATTERY_CLASS_KEYS
+                ]
+            else:
+                # 电池法里「空品牌 + 品类只写类别名」是未找到明确品类时的填充行，
+                # 有真实品类时不该再占一条。
+                has_real = any(
+                    str(item.get("category") or "").strip()
+                    and normalize_text(str(item.get("category") or "")) not in _BATTERY_CLASS_KEYS
+                    for item in items
+                )
+                if has_real:
+                    cleaned = [
+                        item for item in items
+                        if str(item.get("brand") or "").strip()
+                        or normalize_text(str(item.get("category") or "")) not in _BATTERY_CLASS_KEYS
+                    ]
+            return cleaned if cleaned else items
+
         result: List[Dict] = []
         for row in rows:
-            raw = row.get("德国WEEE品类明细")
-            if not raw:
-                result.append(row)
-                continue
-            try:
-                items = json.loads(raw) if isinstance(raw, str) else list(raw)
-            except (TypeError, ValueError):
-                result.append(row)
-                continue
-            if not isinstance(items, list) or not items:
-                result.append(row)
-                continue
-            # 库里已有的旧行可能还带着「设备电池」这类电池法类别（抽取层的过滤
-            # 只对重跑生效）。拆行时顺手剔掉，避免拆出一条永远待人工的废行。
-            cleaned = [
-                item for item in items
-                if normalize_text(str(item.get("category") or "")) not in _WEEE_BATTERY_CLASS_KEYS
-            ]
-            if not cleaned:
-                result.append(row)
-                continue
-            if len(cleaned) == 1:
-                if len(items) > 1:
+            for field in ("德国WEEE品类明细", "德国电池法品类明细"):
+                raw = row.get(field)
+                if not raw:
+                    continue
+                try:
+                    items = json.loads(raw) if isinstance(raw, str) else list(raw)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(items, list) or len(items) <= 1:
+                    continue
+                cleaned = split_items(items, field)
+                if len(cleaned) == 1:
                     clone = dict(row)
-                    clone["德国WEEE品类明细"] = json.dumps(
-                        cleaned, ensure_ascii=False, separators=(",", ":")
-                    )
+                    clone[field] = json.dumps(cleaned, ensure_ascii=False, separators=(",", ":"))
+                    row = clone
+                    continue
+                for index, item in enumerate(cleaned, 1):
+                    clone = dict(row)
+                    clone[field] = json.dumps([item], ensure_ascii=False, separators=(",", ":"))
+                    clone["品类拆分行"] = f"{index}/{len(cleaned)}"
                     result.append(clone)
-                else:
-                    result.append(row)
-                continue
-            for index, item in enumerate(cleaned, 1):
-                clone = dict(row)
-                clone["德国WEEE品类明细"] = json.dumps(
-                    [item], ensure_ascii=False, separators=(",", ":")
-                )
-                clone["品类拆分行"] = f"{index}/{len(cleaned)}"
-                result.append(clone)
+                row = None
+                break
+            if row is not None:
+                result.append(row)
         return result
 
     @staticmethod

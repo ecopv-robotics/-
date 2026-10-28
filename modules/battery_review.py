@@ -416,6 +416,42 @@ def extract_battery_items(subject="", body="", attachments=None, project="", com
             if _clean(item.get("brand"))
             or _norm(item.get("category")) not in branded_categories
         ]
+    # 已经有真正的电池品类时，「空品牌 + 品类就写着类别名（设备电池）」只是
+    # 未找到明确品类时的填充行，留着会在界面上多出一条空品牌条目
+    # （实测 香港郡為/香港酷康：3 条真实电池 + 1 条 空品牌/设备电池）。
+    class_keys = {_norm(name) for name in BATTERY_CLASSES}
+    has_real_category = any(
+        _clean(item.get("category")) and _norm(item.get("category")) not in class_keys
+        for item in result
+    )
+    if has_real_category:
+        result = [
+            item for item in result
+            if _clean(item.get("brand"))
+            or not _clean(item.get("category"))
+            or _norm(item.get("category")) not in class_keys
+        ]
+    # 同品牌、同电池类别下「便携式电池 内置锂电池」与「便携式电池」是同一条证据的
+    # 两种写法（实测 ZENITHFLOW 同品牌两条），保留信息更长的那条。
+    deduped = []
+    for item in result:
+        merged_into = False
+        for kept in deduped:
+            if (_norm(kept.get("brand")) != _norm(item.get("brand"))
+                    or (kept.get("category_class") or "") != (item.get("category_class") or "")):
+                continue
+            left = _norm(kept.get("category"))
+            right = _norm(item.get("category"))
+            if not left or not right:
+                continue
+            if left in right or right in left:
+                if len(right) > len(left):
+                    kept["category"] = item.get("category")
+                merged_into = True
+                break
+        if not merged_into:
+            deduped.append(item)
+    result = deduped
     for category_class, filename in contract_classes.items():
         if not any(item.get("category_class") == category_class for item in result):
             result.append({"brand": "", "category": category_class, "category_class": category_class,
