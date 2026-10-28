@@ -59,7 +59,7 @@ WORKORDER_RETRY_QUEUE = APP_ROOT / "storage" / "workorder_retry_queue.json"
 COMPLETED_HISTORY_XLSX = HISTORY_OUTPUT / "邮件处理完成总表.xlsx"
 UNFINISHED_HISTORY_XLSX = HISTORY_OUTPUT / "邮件未完成总表.xlsx"
 HTML_PATH = APP_ROOT / "workbench.html"
-WORKBENCH_BUILD = "2026.09.30-r11"
+WORKBENCH_BUILD = "2026.10.27-r12"
 SESSION_STATE = APP_ROOT / "session_state.json"
 CONFIG_PATH = APP_ROOT / "config.yaml"
 

@@ -4,7 +4,7 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $releaseName = if ($env:ECOPV_RELEASE_NAME) { $env:ECOPV_RELEASE_NAME } else { 'ECOPV_Mail_Audit_Workbench_2026-10-21' }
 $releaseDir = Join-Path (Join-Path $projectRoot 'dist') $releaseName
 $archivePath = Join-Path (Join-Path $projectRoot 'dist') ($releaseName + '.zip')
-$buildPath = Join-Path (Join-Path $projectRoot 'build') 'pyinstaller-20261021'
+$buildPath = if ($env:ECOPV_BUILD_WORKSPACE) { $env:ECOPV_BUILD_WORKSPACE } else { Join-Path (Join-Path $projectRoot 'build') ('pyinstaller-' + $releaseName) }
 $ocrModelNames = @(
     'PP-LCNet_x1_0_doc_ori',
     'PP-LCNet_x1_0_textline_ori',
