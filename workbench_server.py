@@ -970,6 +970,12 @@ def _workorder_detail_tuple(row: Dict[str, Any]) -> Tuple[str, str, str, str, st
     company = _text(row.get("客户公司名称") or row.get("客户") or row.get("company"))
     project = _text(row.get("标准化项目名称") or row.get("项目") or row.get("program"))
     request = _text(row.get("需求") or row.get("request"))
+    # 德国 WEEE 已按品类拆行：同一主体的多个品类共享公司/项目/需求，只能靠
+    # 「品类拆分行」区分身份，否则兄弟行会互相覆盖（阶段二结果、人工状态）。
+    # 单品类行没有这个字段，身份与历史完全一致。
+    split = _text(row.get("品类拆分行"))
+    if split:
+        request = f"{request}#{split}" if request else f"#{split}"
     return (*mail, company, project, request)
 
 

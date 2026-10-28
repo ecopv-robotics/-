@@ -20,6 +20,13 @@ from modules.weee_category_audit import extract_weee_items
 from modules.battery_review import extract_battery_items
 
 
+# 电池法的五个类别不是 WEEE 品类，混进来只会生成永远「待人工选择」的废行。
+_WEEE_BATTERY_CLASS_KEYS = {
+    normalize_text(name)
+    for name in ("设备电池", "轻型交通工具电池", "工业电池", "启动电池", "汽车电池")
+}
+
+
 _GLUED_CODE_RE = re.compile(
     r"(?<=[\u4e00-\u9fff\)）])(?=[A-Z]{2,6}\d{3,}[ \t\u3000]{1,3}"
     r"[\u4e00-\u9fff][\u4e00-\u9fff（）()·A-Za-z]{1,30}"
@@ -527,6 +534,18 @@ class FieldExtractor:
                         value for value in (existing, count_message) if value
                     )
 
+        # 德国 WEEE 一行只留一个品类：同一主体确实有多个品类时，拆成多条明细，
+        # 公司名称重复是可接受的；不能让人在同一张卡片里看到 N 段重复的
+        # 「品牌 / 德国分类」。计数校验在上一步已经按拆分前的行数算过，
+        # 这里再拆不会造成「数量不一致」的假警报。
+        rows_before_split = len(rows)
+        rows = self._split_weee_category_rows(rows)
+        if len(rows) != rows_before_split:
+            self._log(
+                f"德国WEEE 按品类拆行: {rows_before_split} 行 → {len(rows)} 行"
+                f"（{customer_result.get('customer', '')}）"
+            )
+
         evidence_fingerprint = self._source_evidence_fingerprint(mail, subject, body)
         for row in rows:
             row["阶段一证据指纹"] = evidence_fingerprint
@@ -696,6 +715,59 @@ class FieldExtractor:
             "filter_status": mail.get("filter_status"),
             "filter_reason": mail.get("filter_reason", ""),
         }
+
+    @staticmethod
+    def _split_weee_category_rows(rows: List[Dict]) -> List[Dict]:
+        """德国 WEEE 一个品类一行；一行挂多个品类时按品类拆开。
+
+        客户口径：一个主体确实有多个品类时，要拆成多条明细，公司名称重复
+        没关系；但不能让人在同一张卡片里看到 N 段重复的「品牌 / 德国分类」。
+
+        拆分后每行只保留自己那一个品类，并用「品类拆分行」记下原始序号，
+        让工单核对、人工状态迁移能区分同一主体的兄弟行。单品类行完全不动，
+        避免影响历史行的身份与已确认状态。
+        """
+        result: List[Dict] = []
+        for row in rows:
+            raw = row.get("德国WEEE品类明细")
+            if not raw:
+                result.append(row)
+                continue
+            try:
+                items = json.loads(raw) if isinstance(raw, str) else list(raw)
+            except (TypeError, ValueError):
+                result.append(row)
+                continue
+            if not isinstance(items, list) or not items:
+                result.append(row)
+                continue
+            # 库里已有的旧行可能还带着「设备电池」这类电池法类别（抽取层的过滤
+            # 只对重跑生效）。拆行时顺手剔掉，避免拆出一条永远待人工的废行。
+            cleaned = [
+                item for item in items
+                if normalize_text(str(item.get("category") or "")) not in _WEEE_BATTERY_CLASS_KEYS
+            ]
+            if not cleaned:
+                result.append(row)
+                continue
+            if len(cleaned) == 1:
+                if len(items) > 1:
+                    clone = dict(row)
+                    clone["德国WEEE品类明细"] = json.dumps(
+                        cleaned, ensure_ascii=False, separators=(",", ":")
+                    )
+                    result.append(clone)
+                else:
+                    result.append(row)
+                continue
+            for index, item in enumerate(cleaned, 1):
+                clone = dict(row)
+                clone["德国WEEE品类明细"] = json.dumps(
+                    [item], ensure_ascii=False, separators=(",", ":")
+                )
+                clone["品类拆分行"] = f"{index}/{len(cleaned)}"
+                result.append(clone)
+        return result
 
     @staticmethod
     def _attachment_evidence_json(attachments: list, record_source: str = "") -> str:

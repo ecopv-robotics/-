@@ -1213,10 +1213,17 @@ def extract_weee_items(
                 extraction_method = "规则提取·LLM复检未通过"
 
     # 按品牌/品类证据合并，避免同一行被附件和正文重复展示。
+    # 电池法的五个类别不是 WEEE 品类：它们永远无法归入 WEEE 六类，只会挂一条
+    # 永远「待人工选择」的条目（实测 四川伐火 的德国WEEE 卡里就混进了「设备电池」）。
+    _battery_class_keys = {
+        _norm(name) for name in ("设备电池", "轻型交通工具电池", "工业电池", "启动电池", "汽车电池")
+    }
     merged: Dict[tuple[str, str], Dict[str, Any]] = {}
     for item in items:
         brand = _clean_candidate(item.get("brand"))
         category = _clean_candidate(item.get("category"))
+        if _norm(category) in _battery_class_keys:
+            continue
         if _is_dimension_only(category):
             # 没有同一记录中的主体类别时，尺寸限制本身不构成 WEEE 类别。
             continue
